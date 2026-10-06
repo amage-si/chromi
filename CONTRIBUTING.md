@@ -13,10 +13,14 @@ export BEND_NO_TELEMETRY=1
 mkdir -p build
 bend tests.bend -o build/tests
 ./build/tests --threads 2 --gpu off
-bend examples/shapes.bend -o build/shapes
+bend gpu_tests.bend -o build/gpu_tests        # Voltra beside Chromi; a Vulkan GPU, no display
+./build/gpu_tests --threads 2 --gpu off
 ```
 
-The shape example requires a sibling Ankra checkout; see [examples/README.md](examples/README.md).
+`gpu_tests` must report 0 differing pixels in every scene. The examples need
+sibling checkouts; see [examples/README.md](examples/README.md). The
+integrated demo is one large compilation unit (about 85 s and 3.8 GB peak);
+build it alone.
 
 When a change affects visible behavior, also run the example in an X11/XWayland
 session. Check input, the affected rendering scenario, and normal window closure.

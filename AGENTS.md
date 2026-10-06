@@ -9,7 +9,11 @@ a roadmap item is not implemented merely because it appears in the project scope
 - Implement library logic in Bend 2, rather than wrapping an equivalent toolkit
   written in another language.
 - The official Bend compiler/runtime, OS APIs, and drivers remain external
-  dependencies. Keep any future native bridge minimal, explicit, and separate.
+  dependencies. Chromi has no native code: the GPU path goes through Voltra,
+  windows through Ankra.
+- The CPU reference (`replay.bend`) and Voltra's shader share integer rules
+  (coverage, tint, blending). Change them together and keep `gpu_tests.bend`
+  at 0 differing pixels; the CPU path stays the reference renderer.
 - Before writing Bend, run `bend version` and read `bend guide` from the installed
   toolchain. Verify available syntax/effects instead of assuming old examples work.
 - Keep source, comments, documentation, and commit messages in English.
@@ -30,6 +34,8 @@ quality. Introduce abstractions from concrete needs.
 - Favor simple, maintainable code. Pursue fast, polished behavior with evidence.
 - Run relevant native checks after changes. Validate affected visual interactions
   on a real window when changing visible behavior, then close the window.
+  Capture only the window being tested (its toplevel, never a screen region);
+  the helpers in `tools/` do that and do not take keyboard focus.
 - Compilation is not visual proof. Runtime checks are not proofs of the entire
   system. State partial support and unverified behavior explicitly.
 - Build sequentially. Do not impose virtual-address limits on the Bend runtime

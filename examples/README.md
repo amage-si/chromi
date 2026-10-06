@@ -6,6 +6,7 @@
 | [eco/cpu.bend](eco/cpu.bend) | The same scene on the previous path: CPU raster of the draw list, official window, `XPutImage`, fixed 900x560. For comparison. |
 | [eco/reference.bend](eco/reference.bend) | Writes the demo's first frame painted by the CPU reference, at any size (`reference W H`), as `build/eco-reference-WxH.ppm`. |
 | [eco/bench_gpu.bend](eco/bench_gpu.bend), [eco/bench_cpu.bend](eco/bench_cpu.bend) | The scene redrawn N times on each path; see [docs/bench.md](../docs/bench.md). |
+| [eco/grid.bend](eco/grid.bend) | A text-heavy scene on the same GPU path: the demo's button and an activation counter above N labels ("0001".."N", 10 px) in a 31-column grid (`grid N`, default 1000). Labels are prepared once; an activation re-prepares the counter and every redraw paints every label. Used by the [Eco vs GPUI benchmark](https://github.com/amage-si/eco-bench). |
 | [shapes.bend](shapes.bend) | The canvas with Ankra's official-runtime loop: rectangles, borders, circles, alpha, clipping, retained frames; a click changes the accent color. |
 | [text.bend](text.bend) | Text runs painted on the canvas (used by `integrated.bend`). |
 | [integrated.bend](integrated.bend) | The earlier CPU-only text and button demo in the official window. |

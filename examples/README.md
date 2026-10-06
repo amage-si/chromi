@@ -7,7 +7,7 @@ frames. A mouse-button press changes the accent color.
 Use sibling directories named `Ankra` and `Chromi`. The renderer itself has no
 Ankra dependency; only this example and `tests/ankra.bend` import it.
 
-Validated with [Ankra `c94c8b5ff51f`](https://github.com/amageweb/ankra/commit/c94c8b5ff51f49c482a56e1894a741007bc542dd).
+Validated with [Ankra `c94c8b5ff51f`](https://github.com/amage-si/ankra/commit/c94c8b5ff51f49c482a56e1894a741007bc542dd).
 To reproduce the same dependency revision:
 
 ```sh

@@ -5,7 +5,7 @@
 Chromi turns shapes, images, and coverage masks into a composited frame. It is
 the drawing layer of the AMAGE UI ecosystem: clipping, color composition, and
 rasterization belong here; windows and input belong to
-[Ankra](https://github.com/amageweb/ankra).
+[Ankra](https://github.com/amage-si/ankra).
 
 **Status:** an early **CPU renderer**, tested with **Bend 2.0.35**. Its core and
 native tests depend only on the official Bend `Base` library. The interactive
@@ -34,7 +34,7 @@ The window example also needs X11 development headers/libraries and an X11 or
 XWayland display. No additional AMAGE library is needed for the core tests.
 
 ```sh
-git clone https://github.com/amageweb/chromi.git Chromi
+git clone https://github.com/amage-si/chromi.git Chromi
 cd Chromi
 export BEND_NO_TELEMETRY=1
 bend version
@@ -47,7 +47,7 @@ For the interactive shape scene, clone Ankra beside Chromi, retaining the
 capitalized directory names because Bend imports are case-sensitive:
 
 ```sh
-git clone https://github.com/amageweb/ankra.git ../Ankra
+git clone https://github.com/amage-si/ankra.git ../Ankra
 git -C ../Ankra checkout --detach c94c8b5ff51f49c482a56e1894a741007bc542dd
 bend examples/shapes.bend -o build/shapes
 ./build/shapes --threads 2 --gpu off

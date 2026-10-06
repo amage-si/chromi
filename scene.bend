@@ -243,6 +243,50 @@ def image.bounds(valid: Bool, s: Scene, +key: U32, +x: F32, +y: F32, +width: U32
       image.push(data_valid(data, U32.to_nat((width * height : U32)), mask), s, key, x, y,
         width, height, data, mask, ink)
 
+# Validated pixels
+# ----------------
+
+# Bitmap or mask data checked once, when it is made, so drawing it in every
+# frame costs no validation pass over its samples (a 256x256 image is
+# 65,536 of them).
+type Pixels is Data:
+  Pixels{key: U32, width: U32, height: U32, data: List<&2, U32>, mask: Bool}
+
+def pixels.checked(ok: Bool, +key: U32, +width: U32, +height: U32, data: List<&2, U32>,
+  +mask: Bool) -> Result<&2, &2, String, Pixels>:
+  match ok:
+    case False{}:
+      Fail{"Chromi: invalid bitmap dimensions, data length or coverage"}
+    case True{}:
+      Done{Pixels{key, width, height, data, mask}}
+
+def pixels.made(+key: U32, +width: U32, +height: U32, +data: List<&2, U32>, +mask: Bool) ->
+  Result<&2, &2, String, Pixels>:
+  pixels.checked((width <= 4096 : U32) && (height <= 4096 : U32) &&
+    data_valid(data, U32.to_nat((width * height : U32)), mask), key, width, height, data, mask)
+
+# A row-major RGBA8 bitmap (exactly width * height words), validated once.
+def rgba(+key: U32, +width: U32, +height: U32, +data: List<&2, U32>) -> Result<&2, &2, String, Pixels>:
+  pixels.made(key, width, height, data, False{})
+
+# A row-major coverage mask (0..255, exactly width * height values),
+# validated once.
+def coverage(+key: U32, +width: U32, +height: U32, +data: List<&2, U32>) -> Result<&2, &2, String, Pixels>:
+  pixels.made(key, width, height, data, True{})
+
+def draw.valid(valid: Bool, s: Scene, p: Pixels, +x: F32, +y: F32, +ink: U32) -> Scene:
+  match valid:
+    case False{}:
+      reject(s, "Chromi: bitmap origin out of range")
+    case True{}:
+      Pixels{+key, +w, +h, data, +mask} = p
+      image.push(True{}, s, key, x, y, w, h, data, mask, ink)
+
+# Validated pixels at a logical origin, floored to a physical pixel, one
+# sample per pixel; a mask is drawn in `ink` (ignored for bitmaps).
+def draw(s: Scene, p: Pixels, +x: F32, +y: F32, +ink: U32) -> Scene:
+  draw.valid(G.finite(x) && G.finite(y), s, p, x, y, ink)
+
 # A row-major RGBA8 bitmap (exactly width * height words) at a logical
 # origin, floored to a physical pixel; one sample per pixel, as
 # `main.blit_rgba`. `key` names these pixels for the GPU path.

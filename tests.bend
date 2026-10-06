@@ -133,6 +133,25 @@ def same_result(a: Result<&1, &1, U32 & String, Array<U32>>, b: Result<&1, &1, U
     case _ _:
       False{}
 
+def via_pixels(r: Result<&2, &2, String, S.Pixels>, q: Result<&2, &2, String, S.Pixels>) -> S.Scene:
+  match r q:
+    case Done{m} Done{b}:
+      s = S.new(40, 30, 2.0, 336860415)
+      s = S.fill_rect(s, G.Rect{1.5, 2.25, 10.0, 6.0}, 2164195456)
+      s = S.stroke_rect(s, G.Rect{2.0, 1.0, 15.0, 12.0}, 1.0, 4294967295)
+      s = S.clip_rect(s, G.Rect{3.0, 3.0, 9.0, 8.0})
+      s = S.draw(s, m, 2.5, 2.5, 4286595200)
+      s = S.draw(s, b, 6.0, 4.0, 0)
+      s = S.reset_clip(s)
+      S.fill_rect(s, G.Rect{F32.neg(2.0), 10.0, 6.0, 9.0}, 16744447)
+    case _ _:
+      S.Failed{"pixels rejected"}
+
+def pixels_failed(r: Result<&2, &2, String, S.Pixels>) -> Bool:
+  match r:
+    case Fail{e}: True{}
+    case Done{p}: False{}
+
 def scene_failed(s: S.Scene) -> Bool:
   Result.is_fail(&1, &1, U32 & String, List<&2, S.Op>, S.ops(s))
 
@@ -222,4 +241,8 @@ def main() -> IO(Unit):
     check(U32.is_eq(R.coverage(5, 5, 0, 0, 80, 80, 16, 12), 0) && U32.is_eq(R.coverage(0, 5, 0, 0, 80, 80, 16, 12), 255),
       "coverage: a ring is empty inside its border")
     check(U32.is_eq(R.coverage(0, 0, 4294967288, 4294967288, 8, 8, 0, 0), 255), "coverage: boxes left of and above the origin")
-    IO.print("58 checks passed; this is runtime testing, not a proof of the complete system")
+    check(same_result(R.pixels(drawn.scene()), R.pixels(via_pixels(S.coverage(1, 7, 5, ramp(35)), S.rgba(2, 5, 6, rgba(30))))),
+      "draw list: pixels validated once draw like the validating blits")
+    check(pixels_failed(S.coverage(1, 2, 1, [255])) && pixels_failed(S.coverage(1, 1, 1, [256])) &&
+      Bool.not(pixels_failed(S.rgba(1, 1, 1, [4294967295]))), "draw list: pixels are validated when made")
+    IO.print("60 checks passed; this is runtime testing, not a proof of the complete system")

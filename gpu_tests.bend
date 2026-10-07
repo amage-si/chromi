@@ -168,31 +168,47 @@ def mixed() -> S.Scene:
 # equal the CPU reference of the whole frame. Keys mean the same pixels as
 # in the scenes above (1: ramp(100, 60), 3: picture(64, 64)).
 
+# `glyph` adds a mask with a key the atlas has not seen (uploaded inside a
+# partial frame); `big` a 1024x850 mask mostly off the surface that does not
+# fit in the atlas left, so the atlas starts over in that frame.
 type Setup is Data:
-  Setup{hover: Bool, focus: Bool, overlay: F32, extra: Bool, width: U32, height: U32}
+  Setup{hover: Bool, focus: Bool, overlay: F32, extra: Bool, glyph: Bool, big: Bool, width: U32,
+    height: U32}
 
 def setup() -> Setup:
-  Setup{False{}, False{}, 150.0, False{}, 320, 200}
+  Setup{False{}, False{}, 150.0, False{}, False{}, False{}, 320, 200}
 
 def with_hover(l: Setup) -> Setup:
-  Setup{h, f, o, e, w, hh} = l
-  Setup{True{}, f, o, e, w, hh}
+  Setup{h, f, o, e, gl, bg, w, hh} = l
+  Setup{True{}, f, o, e, gl, bg, w, hh}
 
 def with_focus(l: Setup) -> Setup:
-  Setup{h, f, o, e, w, hh} = l
-  Setup{h, True{}, o, e, w, hh}
+  Setup{h, f, o, e, gl, bg, w, hh} = l
+  Setup{h, True{}, o, e, gl, bg, w, hh}
 
 def moved(l: Setup) -> Setup:
-  Setup{h, f, o, e, w, hh} = l
-  Setup{h, f, 20.0, e, w, hh}
+  Setup{h, f, o, e, gl, bg, w, hh} = l
+  Setup{h, f, 20.0, e, gl, bg, w, hh}
 
 def added(l: Setup) -> Setup:
-  Setup{h, f, o, e, w, hh} = l
-  Setup{h, f, o, True{}, w, hh}
+  Setup{h, f, o, e, gl, bg, w, hh} = l
+  Setup{h, f, o, True{}, gl, bg, w, hh}
+
+def with_glyph(l: Setup) -> Setup:
+  Setup{h, f, o, e, gl, bg, w, hh} = l
+  Setup{h, f, o, e, True{}, bg, w, hh}
+
+def with_big(l: Setup) -> Setup:
+  Setup{h, f, o, e, gl, bg, w, hh} = l
+  Setup{h, f, o, e, gl, True{}, w, hh}
+
+def without_hover(l: Setup) -> Setup:
+  Setup{h, f, o, e, gl, bg, w, hh} = l
+  Setup{False{}, f, o, e, gl, bg, w, hh}
 
 def resized(l: Setup) -> Setup:
-  Setup{h, f, o, e, w, hh} = l
-  Setup{h, f, o, e, 240, 150}
+  Setup{h, f, o, e, gl, bg, w, hh} = l
+  Setup{h, f, o, e, gl, bg, 240, 150}
 
 def ring(focus: Bool, s: S.Scene) -> S.Scene:
   match focus:
@@ -214,15 +230,29 @@ def extra.part(on: Bool, b: F.Build) -> F.Build:
     case False{}:
       b
 
+def glyph.part(on: Bool, b: F.Build) -> F.Build:
+  match on:
+    case True{}:
+      F.part(b, 7, s => S.blit_mask(s, 9, 230.0, 110.0, 30, 20, ramp(30, 20), 4294967295))
+    case False{}:
+      b
+
+def big.part(on: Bool, b: F.Build) -> F.Build:
+  match on:
+    case True{}:
+      F.part(b, 8, s => S.blit_mask(s, 10, 300.0, 180.0, 1024, 850, ramp(1024, 850), 4282664064))
+    case False{}:
+      b
+
 def framed(l: Setup, last: F.Frame) -> F.Frame:
-  Setup{+hover, +focus, +x, more, +w, +h} = l
+  Setup{+hover, +focus, +x, more, gl, bg, +w, +h} = l
   b = F.begin(last, w, h, 1.0, 336860415)
   b = F.part(b, 1, s => S.fill_rect(s, G.Rect{16.0, 16.0, 288.0, 168.0}, 354033919))
   b = F.part(b, 2, s => paint.button(hover, focus, s))
   b = F.part(b, 3, s => S.blit_rgba(s, 3, 200.0, 40.0, 64, 64, picture(64, 64)))
   b = F.part(b, 4, s => S.fill_rect(s, G.Rect{x, 90.0, 120.0, 50.0}, 2164195456))
   b = F.part(b, 5, s => S.blit_mask(s, 1, F32.neg(30.0), 140.0, 100, 60, ramp(100, 60), 2868903935))
-  F.end(extra.part(more, b))
+  F.end(big.part(bg, glyph.part(gl, extra.part(more, b))))
 
 def verdict.at(d: Diff, +total: U32, +w: U32, name: String) -> IO(Unit):
   Diff{+n, +wd, +f} = d
@@ -272,6 +302,21 @@ def step(prev: Gpu.Renderer & F.Frame, l: Setup, +name: String) -> IO(Gpu.Render
       name ++ ": drawn partly, " ++ U32.show(damaged) ++ " of 64000 pixels damaged")
     rendered(r, next, 320, 200, name)
 
+def step.reset.check(got: Gpu.Renderer & F.Frame, +before: U32) -> IO(Gpu.Renderer & F.Frame):
+  (+r, f) = got
+  do IO<Gpu.Renderer & F.Frame>:
+    check(U32.is_eq(Gpu.resets(r), (before + 1 : U32)), "atlas: that frame started the atlas over (" ++
+      U32.show(Gpu.resets(r)) ++ " fresh starts)")
+    return (r, f)
+
+# As `step`, and the frame must have started the atlas over.
+def step.reset(prev: Gpu.Renderer & F.Frame, l: Setup, +name: String) -> IO(Gpu.Renderer & F.Frame):
+  (+r, last) = prev
+  +before = Gpu.resets(r)
+  do IO<Gpu.Renderer & F.Frame>:
+    got : Gpu.Renderer & F.Frame <- step((r, last), l, name)
+    step.reset.check(got, before)
+
 def control.at(got: Gpu.Renderer & Array<U32>, +want: F.Frame) -> IO(Gpu.Renderer):
   (r, px) = got
   do IO<Gpu.Renderer>:
@@ -318,7 +363,14 @@ def frames(+r0: Gpu.Renderer) -> IO(Gpu.Renderer):
       "frames: a translucent part moved across others")
     s5 : Gpu.Renderer & F.Frame <- step(s4, added(moved(with_focus(with_hover(setup())))),
       "frames: a part added")
-    s6 : Gpu.Renderer & F.Frame <- resized.step(s5)
+    s5b : Gpu.Renderer & F.Frame <- step(s5, with_glyph(added(moved(with_focus(with_hover(setup()))))),
+      "frames: a glyph the atlas has not seen, uploaded inside the frame")
+    s5c : Gpu.Renderer & F.Frame <- step.reset(s5b, with_big(with_glyph(added(moved(with_focus(with_hover(setup())))))),
+      "frames: a mask that does not fit, so the atlas starts over inside the frame")
+    s5d : Gpu.Renderer & F.Frame <- step(s5c,
+      without_hover(with_big(with_glyph(added(moved(with_focus(with_hover(setup()))))))),
+      "frames: after the atlas started over, kept parts are planned again where drawn")
+    s6 : Gpu.Renderer & F.Frame <- resized.step(s5d)
     s7 : Gpu.Renderer & F.Frame <- back(s6)
     stripped(s7)
 

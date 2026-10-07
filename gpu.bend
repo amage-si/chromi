@@ -409,9 +409,8 @@ def render.paint(+r: Renderer, prep: Prep, +reset: Bool, +whole: Bool, +regions:
   +ranges = ranges.pick(whole, regions, ps, U32.min(w, extent.w(ext)), U32.min(h, extent.h(ext)))
   +total = ranges.total(ranges, 0)
   do IO<Renderer & F.Frame>:
-    +g1 : V.Gpu <- V.update(g, rs)
-    +g2 : V.Gpu <- V.paint(g1, assemble(whole, ranges, ps, bg,
-      Array.new(U32, W.depth((total * Q.stride_words() : U32)), 0)), total, bg, ranges, whole)
+    +g2 : V.Gpu <- V.paint(g, assemble(whole, ranges, ps, bg,
+      Array.new(U32, W.depth((total * Q.stride_words() : U32)), 0)), total, bg, ranges, whole, rs)
     return (Renderer{g2, a, (u + t : U32), (n + Bool.to_u32(reset) : U32), total, Bool.not(whole)},
       F.Frame{w, h, sc, bg, ps, Nil{}, False{}})
 

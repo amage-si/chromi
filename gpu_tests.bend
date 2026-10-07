@@ -3,6 +3,7 @@ import ./geometry.bend as G
 import ./scene.bend as S
 import ./replay.bend as R
 import ./gpu.bend as Gpu
+import ./frame.bend as F
 import ../Voltra/gpu.bend as V
 import ../Voltra/atlas.bend as At
 
@@ -159,6 +160,168 @@ def mixed() -> S.Scene:
   s = S.fill_rect(s, G.Rect{30.0, 30.0, 150.0, 6.0}, 1089715967)
   S.blit_mask(s, 2, 180.0, 120.0, 80, 40, ramp(80, 40), 4286595200)
 
+# Retained frames
+# ---------------
+#
+# Frames of parts (frame.bend) rendered by `Gpu.render`: after the first,
+# each one redraws only its damage on Voltra's canvas; the readback must
+# equal the CPU reference of the whole frame. Keys mean the same pixels as
+# in the scenes above (1: ramp(100, 60), 3: picture(64, 64)).
+
+type Setup is Data:
+  Setup{hover: Bool, focus: Bool, overlay: F32, extra: Bool, width: U32, height: U32}
+
+def setup() -> Setup:
+  Setup{False{}, False{}, 150.0, False{}, 320, 200}
+
+def with_hover(l: Setup) -> Setup:
+  Setup{h, f, o, e, w, hh} = l
+  Setup{True{}, f, o, e, w, hh}
+
+def with_focus(l: Setup) -> Setup:
+  Setup{h, f, o, e, w, hh} = l
+  Setup{h, True{}, o, e, w, hh}
+
+def moved(l: Setup) -> Setup:
+  Setup{h, f, o, e, w, hh} = l
+  Setup{h, f, 20.0, e, w, hh}
+
+def added(l: Setup) -> Setup:
+  Setup{h, f, o, e, w, hh} = l
+  Setup{h, f, o, True{}, w, hh}
+
+def resized(l: Setup) -> Setup:
+  Setup{h, f, o, e, w, hh} = l
+  Setup{h, f, o, e, 240, 150}
+
+def ring(focus: Bool, s: S.Scene) -> S.Scene:
+  match focus:
+    case True{}:
+      S.border(s, G.Rect{28.0, 118.0, 134.0, 48.0}, 10.0, 2.0, 2764636159)
+    case False{}:
+      s
+
+def paint.button(+hover: Bool, focus: Bool, s: S.Scene) -> S.Scene:
+  b = ring(focus, S.round_rect(s, G.Rect{30.0, 120.0, 130.0, 44.0}, 8.0,
+    Bool.pick(U32, hover, 829482751, 610062079)))
+  c = S.clip_rect(b, G.Rect{38.0, 124.0, 114.0, 36.0})
+  S.reset_clip(S.blit_mask(c, 1, 44.0, 128.0, 100, 60, ramp(100, 60), 4294967295))
+
+def extra.part(on: Bool, b: F.Build) -> F.Build:
+  match on:
+    case True{}:
+      F.part(b, 6, s => S.round_rect(s, G.Rect{250.0, 150.0, 50.0, 30.0}, 12.0, 1086374143))
+    case False{}:
+      b
+
+def framed(l: Setup, last: F.Frame) -> F.Frame:
+  Setup{+hover, +focus, +x, more, +w, +h} = l
+  b = F.begin(last, w, h, 1.0, 336860415)
+  b = F.part(b, 1, s => S.fill_rect(s, G.Rect{16.0, 16.0, 288.0, 168.0}, 354033919))
+  b = F.part(b, 2, s => paint.button(hover, focus, s))
+  b = F.part(b, 3, s => S.blit_rgba(s, 3, 200.0, 40.0, 64, 64, picture(64, 64)))
+  b = F.part(b, 4, s => S.fill_rect(s, G.Rect{x, 90.0, 120.0, 50.0}, 2164195456))
+  b = F.part(b, 5, s => S.blit_mask(s, 1, F32.neg(30.0), 140.0, 100, 60, ramp(100, 60), 2868903935))
+  F.end(extra.part(more, b))
+
+def verdict.at(d: Diff, +total: U32, +w: U32, name: String) -> IO(Unit):
+  Diff{+n, +wd, +f} = d
+  check(U32.is_eq(n, 0), name ++ ": " ++ U32.show(n) ++ " of " ++ U32.show(total) ++
+    " pixels differ, max channel difference " ++ U32.show(wd) ++
+    Bool.pick(String, U32.is_eq(n, 0), "", " (first at " ++ U32.show((f % w : U32)) ++ "," ++
+      U32.show((f / w : U32)) ++ ")"))
+
+def compared.at(gpu: Array<U32>, cpu: Result<&1, &1, U32 & String, Array<U32>>, +w: U32, +h: U32,
+  name: String) -> IO(Unit):
+  match cpu:
+    case Fail{(code, message)}:
+      IO.die(Unit, 1, "FAIL " ++ name ++ ": the CPU reference failed: " ++ message)
+    case Done{ref}:
+      +total = (w * h : U32)
+      verdict.at(compare(U32.to_nat(total), Array.get(U32, gpu, 0), Array.get(U32, ref, 0), 0, Diff{0, 0, 0}),
+        total, w, name)
+
+def rendered.compared(got: Gpu.Renderer & Array<U32>, +want: F.Frame, +w: U32, +h: U32, name: String) ->
+  IO(Gpu.Renderer):
+  (r, px) = got
+  do IO<Gpu.Renderer>:
+    compared.at(px, R.pixels.of(R.frame_canvas(want)), w, h, name)
+    return r
+
+
+def rendered.read(got: Gpu.Renderer & F.Frame, +want: F.Frame, +w: U32, +h: U32, name: String) ->
+  IO(Gpu.Renderer & F.Frame):
+  (+r, drawn) = got
+  do IO<Gpu.Renderer & F.Frame>:
+    px : Gpu.Renderer & Array<U32> <- Gpu.read(r)
+    +r2 : Gpu.Renderer <- rendered.compared(px, want, w, h, name)
+    return (r2, drawn)
+
+def rendered(+r: Gpu.Renderer, +f: F.Frame, +w: U32, +h: U32, name: String) -> IO(Gpu.Renderer & F.Frame):
+  do IO<Gpu.Renderer & F.Frame>:
+    got : Gpu.Renderer & F.Frame <- Gpu.render(r, f)
+    rendered.read(got, f, w, h, name)
+
+# The next frame after `prev`, drawn only where it changed.
+def step(prev: Gpu.Renderer & F.Frame, l: Setup, +name: String) -> IO(Gpu.Renderer & F.Frame):
+  (+r, last) = prev
+  +next = framed(l, last)
+  +damaged = F.area(F.regions(next), 0)
+  do IO<Gpu.Renderer & F.Frame>:
+    check(Bool.not(F.whole(next)) && V.kept(Gpu.gpu(r)) && U32.is_gt(damaged, 0) && U32.is_lt(damaged, 64000),
+      name ++ ": drawn partly, " ++ U32.show(damaged) ++ " of 64000 pixels damaged")
+    rendered(r, next, 320, 200, name)
+
+def control.at(got: Gpu.Renderer & Array<U32>, +want: F.Frame) -> IO(Gpu.Renderer):
+  (r, px) = got
+  do IO<Gpu.Renderer>:
+    control.verdict(compare.ref(px, R.pixels.of(R.frame_canvas(want))), 64000)
+    return r
+
+def stripped.read(got: Gpu.Renderer & F.Frame, +want: F.Frame) -> IO(Gpu.Renderer):
+  (r, drawn) = got
+  do IO<Gpu.Renderer>:
+    px : Gpu.Renderer & Array<U32> <- Gpu.read(r)
+    control.at(px, want)
+
+
+# A control: a changed frame stripped of its damage leaves the last picture,
+# which the comparison must see as different.
+def stripped(prev: Gpu.Renderer & F.Frame) -> IO(Gpu.Renderer):
+  (+r, last) = prev
+  +next = framed(with_focus(with_hover(setup())), last)
+  do IO<Gpu.Renderer>:
+    got : Gpu.Renderer & F.Frame <- Gpu.render(r, F.drawn(next, F.parts(next)))
+    stripped.read(got, next)
+
+def resized.step(prev: Gpu.Renderer & F.Frame) -> IO(Gpu.Renderer & F.Frame):
+  (+r, last) = prev
+  +next = framed(resized(setup()), last)
+  do IO<Gpu.Renderer & F.Frame>:
+    +r1 : Gpu.Renderer <- Gpu.resize(r, 240, 150)
+    check(F.whole(next) && Bool.not(V.kept(Gpu.gpu(r1))), "frames: a new size is drawn whole")
+    rendered(r1, next, 240, 150, "frames: the whole frame at a new size, 240x150")
+
+def back(prev: Gpu.Renderer & F.Frame) -> IO(Gpu.Renderer & F.Frame):
+  (+r, last) = prev
+  do IO<Gpu.Renderer & F.Frame>:
+    +r1 : Gpu.Renderer <- Gpu.resize(r, 320, 200)
+    rendered(r1, framed(setup(), last), 320, 200, "frames: back at 320x200, whole")
+
+def frames(+r0: Gpu.Renderer) -> IO(Gpu.Renderer):
+  do IO<Gpu.Renderer>:
+    s1 : Gpu.Renderer & F.Frame <- rendered(r0, framed(setup(), F.none()), 320, 200,
+      "frames: the first frame, drawn whole")
+    s2 : Gpu.Renderer & F.Frame <- step(s1, with_hover(setup()), "frames: hover, under a translucent part")
+    s3 : Gpu.Renderer & F.Frame <- step(s2, with_focus(with_hover(setup())), "frames: focus ring added")
+    s4 : Gpu.Renderer & F.Frame <- step(s3, moved(with_focus(with_hover(setup()))),
+      "frames: a translucent part moved across others")
+    s5 : Gpu.Renderer & F.Frame <- step(s4, added(moved(with_focus(with_hover(setup())))),
+      "frames: a part added")
+    s6 : Gpu.Renderer & F.Frame <- resized.step(s5)
+    s7 : Gpu.Renderer & F.Frame <- back(s6)
+    stripped(s7)
+
 # Running
 # -------
 
@@ -220,5 +383,6 @@ def main() -> IO(Unit):
     +r : Gpu.Renderer <- Gpu.open_offscreen(width(), height())
     IO.print(V.describe(Gpu.gpu(r)))
     +r1 : Gpu.Renderer <- run(r)
+    +r2 : Gpu.Renderer <- frames(r1)
     check(overflow() && fits(), "atlas: a frame that does not fit is detected (the renderer then starts the atlas over)")
-    finished(r1)
+    finished(r2)

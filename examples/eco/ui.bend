@@ -243,13 +243,31 @@ def moved(r: Result<&2, &2, KT.Error, KT.Change>, +old: KT.State) -> KT.State:
     case Done{c}:
       K.next(c)
 
-# Redoes the text and the layout for a new size or a new click count, and
-# moves Kairo's button to its new place.
+# The texts after a new click count at the same column width: only the
+# status line is laid out again; the other runs are kept as they were.
+def restatus(+font: F.Font, +column: F32, +clicks: U32, +cache: T.Cache, t: Texts) ->
+  Result<&2, &2, String, Grown>:
+  Texts{a, b, c, d, old, f, g} = t
+  do Result<&2, &2, String, Grown>:
+    +e : T.Prepared <- T.prepare(font, status(clicks), 16.0, column, cache)
+    return Grown{Texts{a, b, c, d, run_of(e), f, g}, cache_of(e)}
+
+def retext(same: Bool, +font: F.Font, +column: F32, +clicks: U32, +cache: T.Cache,
+  t: Texts) -> Result<&2, &2, String, Grown>:
+  match same:
+    case True{}:
+      restatus(font, column, clicks, cache, t)
+    case False{}:
+      texts(font, column, clicks, cache)
+
+# Redoes the layout for a new size or a new click count (the text too for
+# a new column width, else only the status line), and moves Kairo's button
+# to its new place.
 def rebuild(+m: Model, +w: U32, +h: U32, +clicks: U32) -> Result<&2, &2, String, Model>:
-  Model{+a, +cache, t, p, +k, n, ow, oh} = m
+  Model{+a, +cache, t, p, +k, n, +ow, oh} = m
   Assets{+font, pic, heart} = a
   do Result<&2, &2, String, Model>:
-    +g : Grown <- texts(font, column(w), clicks, cache)
+    +g : Grown <- retext(F32.is_eq(column(ow), column(w)), font, column(w), clicks, cache, t)
     +places : Places <- arrange(grown_texts(g), w, h)
     return built(a, g, places, moved(K.set_bounds(k, button_id(), places_button(places)), k), clicks, w, h)
 

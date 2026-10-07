@@ -1,5 +1,6 @@
 import Base
 import ../../scene.bend as S
+import ../../frame.bend as Fr
 import ../../gpu.bend as Gpu
 import ./ui.bend as U
 import ./media.bend as Media
@@ -36,7 +37,7 @@ def title() -> String:
   "AMAGE Eco - Ankra, Voltra, Chromi"
 
 type Demo is Data:
-  Demo{renderer: Gpu.Renderer, model: U.Model, redraws: U32, started: Nat}
+  Demo{renderer: Gpu.Renderer, model: U.Model, shown: Fr.Frame, redraws: U32, started: Nat}
 
 def need(-A: Data, r: Result<&2, &2, String, A>) -> IO(A):
   match r:
@@ -147,7 +148,7 @@ def decide(+app: Demo, +redraw: Bool) -> Loop.Step<Demo>:
   Bool.pick(Loop.Step<Demo>, redraw, Loop.Redraw{app}, Loop.Keep{app})
 
 def update.folded(+win: A.Win, +es: List<&2, A.Input>, app: Demo, f: Fold) -> IO(Loop.Step<Demo>):
-  Demo{+r, +m, n, t} = app
+  Demo{+r, +m, shown, n, t} = app
   Fold{+k, +a, +d} = f
   +w = A.width(win)
   +h = A.height(win)
@@ -157,11 +158,11 @@ def update.folded(+win: A.Win, +es: List<&2, A.Input>, app: Demo, f: Fold) -> IO
     logged(es, a)
     +r1 : Gpu.Renderer <- resized(sized, r, w, h)
     +m1 : U.Model <- remodel(again, U.with_kairo(m, k), w, h, (U.clicks(m) + a : U32))
-    return decide(Demo{r1, m1, n, t}, d || again || A.exposed(es) || Gpu.pending(r1))
+    return decide(Demo{r1, m1, shown, n, t}, d || again || A.exposed(es) || Gpu.pending(r1))
 
 # Window events through Kairo; a new size or a click redoes the layout.
 def model_of(a: Demo) -> U.Model:
-  Demo{r, m, n, t} = a
+  Demo{r, m, s, n, t} = a
   m
 
 def update(win: A.Win, batch: List<&2, A.Input>, state: Demo) -> IO(Loop.Step<Demo>):
@@ -175,26 +176,33 @@ def update(win: A.Win, batch: List<&2, A.Input>, state: Demo) -> IO(Loop.Step<De
 # -------
 
 def report(+n: U32, +ms: Nat, +r: Gpu.Renderer, +m: U.Model, +since: Nat) -> IO(Unit):
-  +size = Gpu.target_size(r)
   IO.print("redraw " ++ U32.show(n) ++ " at " ++ Nat.show(since) ++ " ms: scene + GPU " ++ Nat.show(ms) ++
-    " ms, " ++ U32.show(U.glyphs(m)) ++ " glyphs cached, atlas " ++ U32.show(Gpu.entries(r)) ++
-    " entries, " ++ U32.show(Gpu.uploaded(r)) ++ " texels uploaded")
+    " ms, " ++ Bool.pick(String, Gpu.last_partial(r), "damage only, ", "whole, ") ++
+    U32.show(Gpu.last_quads(r)) ++ " quads, " ++ U32.show(U.glyphs(m)) ++ " glyphs cached, atlas " ++
+    U32.show(Gpu.entries(r)) ++ " entries, " ++ U32.show(Gpu.uploaded(r)) ++ " texels uploaded")
 
-def draw(win: A.Win, app: Demo) -> IO(Loop.Step<Demo>):
-  Demo{+r, +m, +n, +t} = app
+def drawn(got: Gpu.Renderer & Fr.Frame, +m: U.Model, +n: U32, +t: Nat, +t0: Nat) -> IO(Loop.Step<Demo>):
+  (+r1, shown) = got
   do IO<Loop.Step<Demo>>:
-    +t0 : Nat <- IO.now()
-    +r1 : Gpu.Renderer <- Gpu.draw(r, U.frame(m))
     +t1 : Nat <- IO.now()
     report((n + 1 : U32), Nat.sub(t1, t0), r1, m, Nat.sub(t1, t))
-    return decide(Demo{r1, m, (n + 1 : U32), t}, Gpu.pending(r1))
+    return decide(Demo{r1, m, shown, (n + 1 : U32), t}, Gpu.pending(r1))
+
+# The frame is retained (Chromi's frame.bend): only what changed since the
+# last one is planned and redrawn.
+def draw(win: A.Win, app: Demo) -> IO(Loop.Step<Demo>):
+  Demo{+r, +m, last, +n, +t} = app
+  do IO<Loop.Step<Demo>>:
+    +t0 : Nat <- IO.now()
+    got : Gpu.Renderer & Fr.Frame <- Gpu.render(r, U.framed(m, last))
+    drawn(got, m, n, t, t0)
 
 # Startup and teardown
 # --------------------
 
 def finish(end: A.Win & Demo) -> IO(Unit):
   (win, app) = end
-  Demo{+r, +m, +n, t} = app
+  Demo{+r, +m, s, +n, t} = app
   do IO<Unit>:
     IO.print("frames presented: " ++ U32.show(V.drawn(Gpu.gpu(r))) ++ ", redraws: " ++ U32.show(n) ++
       ", clicks: " ++ U32.show(U.clicks(m)))
@@ -219,5 +227,5 @@ def main() -> IO(Unit):
     +t2 : Nat <- IO.now()
     IO.print(V.describe(Gpu.gpu(r)))
     IO.print("window and GPU ready in " ++ Nat.show(Nat.sub(t2, t1)) ++ " ms")
-    end : A.Win & Demo <- Loop.run(~Demo, ~update, ~draw, win, Demo{r, model, 0, t0})
+    end : A.Win & Demo <- Loop.run(~Demo, ~update, ~draw, win, Demo{r, model, Fr.none(), 0, t0})
     finish(end)

@@ -1,6 +1,8 @@
 import Base
 import ../../scene.bend as S
+import ../../frame.bend as Fr
 import ../../gpu.bend as Gpu
+import ../../geometry.bend as G
 import ./ui.bend as U
 import ./text.bend as T
 import ../../../Runika/font.bend as F
@@ -16,11 +18,13 @@ import ../../../Voltra/gpu.bend as V
 # A text-heavy scene for benchmarks: the demo's Mokko button and an
 # activation counter above N labels ("0001".."N", 10 px) in a grid of 31
 # columns of 28x12 cells from (16, 64). It runs on the same path as the
-# integrated demo (Ankra window, Kairo, Chromi draw list, Voltra) and logs
-# the same way. Each label's text run is prepared once at startup; an
+# integrated demo (Ankra window, Kairo, Chromi retained frame, Voltra) and
+# logs the same way. Each label's text run is prepared once at startup; an
 # activation (Tab, then Space or Enter, or a click) re-prepares only the
-# counter, and every redraw paints every label. At N = 5000 the rows past
-# the window's bottom are still drawn (outside it).
+# counter. The frame has three parts: the button (keyed by its Kairo id),
+# the counter and the labels; the labels are recorded once per window size
+# (a stamped part), and labels outside the window are not painted at all,
+# so an activation redraws the button and the counter only.
 #
 #   ./build/grid [N] --threads 2 --gpu off      (N defaults to 1000)
 #
@@ -160,30 +164,49 @@ def glyphs(m: Grid) -> U32:
 # The frame
 # ---------
 
-def paint_cells(cs: List<&2, Cell>, s: S.Scene) -> S.Scene:
+def paint_cell(seen: Bool, s: S.Scene, run: T.Run, +x: F32, +y: F32) -> S.Scene:
+  match seen:
+    case True{}:
+      T.paint(s, run, x, y, U.muted())
+    case False{}:
+      s
+
+# Labels whose box (with a margin for glyphs past the run's line box)
+# cannot show are skipped before any glyph is placed.
+def paint_cells(cs: List<&2, Cell>, +s: S.Scene) -> S.Scene:
   match cs:
     case Nil{}:
       s
-    case Con{Cell{+x, +y, run}, rest}:
-      paint_cells(rest, T.paint(s, run, x, y, U.muted()))
+    case Con{Cell{+x, +y, +run}, rest}:
+      paint_cells(rest, paint_cell(S.visible(s, G.Rect{(x - 4.0 : F32), (y - 4.0 : F32),
+        (T.width(run) + 8.0 : F32), (T.height(run) + 8.0 : F32)}), s, run, x, y))
 
 # The counter 16 px right of the button, centered on it vertically.
 def paint_counter(s: S.Scene, size: TG.Size, +counter: T.Run) -> S.Scene:
   TG.Size{bw, bh} = size
   T.paint(s, counter, (32.0 + bw : F32), (8.0 + (bh - T.height(counter)) / 2.0 : F32), U.ink())
 
-def frame(m: Grid) -> S.Scene:
+def counter_id() -> U32:
+  2
+
+def cells_id() -> U32:
+  3
+
+# The next frame after `last`: the button (Kairo's id) and the counter are
+# recorded and compared every frame; the labels only for a new window size.
+def frame(m: Grid, last: Fr.Frame) -> Fr.Frame:
   Grid{f, cache, +label, counter, cells, k, n, +w, +h} = m
-  s = S.new(w, h, 1.0, U.background())
-  s = U.button(M.button(U.button_node(button_rect(label)), k, U.metrics(label), 18.0, M.theme()), s, label)
-  s = paint_counter(s, label_size(label), counter)
-  paint_cells(cells, s)
+  b = Fr.begin(last, w, h, 1.0, U.background())
+  b = Fr.part(b, U.button_id(), s => U.button(M.button(U.button_node(button_rect(label)), k,
+    U.metrics(label), 18.0, M.theme()), s, label))
+  b = Fr.part(b, counter_id(), s => paint_counter(s, label_size(label), counter))
+  Fr.end(Fr.stamped(b, cells_id(), 1, s => paint_cells(cells, s)))
 
 # Input (as in main.bend)
 # -----------------------
 
 type GridApp is Data:
-  GridApp{renderer: Gpu.Renderer, model: Grid, redraws: U32, started: Nat}
+  GridApp{renderer: Gpu.Renderer, model: Grid, shown: Fr.Frame, redraws: U32, started: Nat}
 
 type Fold is Data:
   Fold{kairo: KT.State, activations: U32, dirty: Bool}
@@ -266,7 +289,7 @@ def decide(+app: GridApp, +redraw: Bool) -> Loop.Step<GridApp>:
   Bool.pick(Loop.Step<GridApp>, redraw, Loop.Redraw{app}, Loop.Keep{app})
 
 def update.folded(+win: A.Win, +es: List<&2, A.Input>, app: GridApp, f: Fold) -> IO(Loop.Step<GridApp>):
-  GridApp{+r, +m, n, t} = app
+  GridApp{+r, +m, shown, n, t} = app
   Fold{+k, +a, +d} = f
   +w = A.width(win)
   +h = A.height(win)
@@ -275,10 +298,10 @@ def update.folded(+win: A.Win, +es: List<&2, A.Input>, app: GridApp, f: Fold) ->
     logged(es, a)
     +r1 : Gpu.Renderer <- resized(sized, r, w, h)
     +m1 : Grid <- need(Grid, recount(U32.is_gt(a, 0), with_kairo(m, k), (clicks(m) + a : U32), w, h))
-    return decide(GridApp{r1, m1, n, t}, d || sized || U32.is_gt(a, 0) || A.exposed(es) || Gpu.pending(r1))
+    return decide(GridApp{r1, m1, shown, n, t}, d || sized || U32.is_gt(a, 0) || A.exposed(es) || Gpu.pending(r1))
 
 def model_of(a: GridApp) -> Grid:
-  GridApp{r, m, n, t} = a
+  GridApp{r, m, s, n, t} = a
   m
 
 def update(win: A.Win, batch: List<&2, A.Input>, state: GridApp) -> IO(Loop.Step<GridApp>):
@@ -293,21 +316,27 @@ def update(win: A.Win, batch: List<&2, A.Input>, state: GridApp) -> IO(Loop.Step
 
 def report(+n: U32, +ms: Nat, +r: Gpu.Renderer, +m: Grid, +since: Nat) -> IO(Unit):
   IO.print("redraw " ++ U32.show(n) ++ " at " ++ Nat.show(since) ++ " ms: scene + GPU " ++ Nat.show(ms) ++
-    " ms, " ++ U32.show(glyphs(m)) ++ " glyphs cached, atlas " ++ U32.show(Gpu.entries(r)) ++
-    " entries, " ++ U32.show(Gpu.uploaded(r)) ++ " texels uploaded")
+    " ms, " ++ Bool.pick(String, Gpu.last_partial(r), "damage only, ", "whole, ") ++
+    U32.show(Gpu.last_quads(r)) ++ " quads, " ++ U32.show(glyphs(m)) ++ " glyphs cached, atlas " ++
+    U32.show(Gpu.entries(r)) ++ " entries, " ++ U32.show(Gpu.uploaded(r)) ++ " texels uploaded")
 
-def draw(win: A.Win, app: GridApp) -> IO(Loop.Step<GridApp>):
-  GridApp{+r, +m, +n, +t} = app
+def drawn(got: Gpu.Renderer & Fr.Frame, +m: Grid, +n: U32, +t: Nat, +t0: Nat) -> IO(Loop.Step<GridApp>):
+  (+r1, shown) = got
   do IO<Loop.Step<GridApp>>:
-    +t0 : Nat <- IO.now()
-    +r1 : Gpu.Renderer <- Gpu.draw(r, frame(m))
     +t1 : Nat <- IO.now()
     report((n + 1 : U32), Nat.sub(t1, t0), r1, m, Nat.sub(t1, t))
-    return decide(GridApp{r1, m, (n + 1 : U32), t}, Gpu.pending(r1))
+    return decide(GridApp{r1, m, shown, (n + 1 : U32), t}, Gpu.pending(r1))
+
+def draw(win: A.Win, app: GridApp) -> IO(Loop.Step<GridApp>):
+  GridApp{+r, +m, last, +n, +t} = app
+  do IO<Loop.Step<GridApp>>:
+    +t0 : Nat <- IO.now()
+    got : Gpu.Renderer & Fr.Frame <- Gpu.render(r, frame(m, last))
+    drawn(got, m, n, t, t0)
 
 def finish(end: A.Win & GridApp) -> IO(Unit):
   (win, app) = end
-  GridApp{+r, +m, +n, t} = app
+  GridApp{+r, +m, s, +n, t} = app
   do IO<Unit>:
     IO.print("frames presented: " ++ U32.show(V.drawn(Gpu.gpu(r))) ++ ", redraws: " ++ U32.show(n) ++
       ", clicks: " ++ U32.show(clicks(m)))
@@ -343,5 +372,5 @@ def main() -> IO(Unit):
     +t2 : Nat <- IO.now()
     IO.print(V.describe(Gpu.gpu(r)))
     IO.print("window and GPU ready in " ++ Nat.show(Nat.sub(t2, t1)) ++ " ms")
-    end : A.Win & GridApp <- Loop.run(~GridApp, ~update, ~draw, win, GridApp{r, model, 0, t0})
+    end : A.Win & GridApp <- Loop.run(~GridApp, ~update, ~draw, win, GridApp{r, model, Fr.none(), 0, t0})
     finish(end)

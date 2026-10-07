@@ -1,6 +1,7 @@
 import Base
 import ../../scene.bend as S
 import ../../geometry.bend as G
+import ../../frame.bend as Fr
 import ./text.bend as T
 import ./media.bend as Media
 import ../../../Runika/font.bend as F
@@ -331,3 +332,24 @@ def frame(m: Model) -> S.Scene:
   s = at(s, pg, pic_cap, muted())
   s = Media.paint_svg(s, heart, rx(svg_at), ry(svg_at))
   at(s, sv, svg_cap, muted())
+
+# The same drawing as retained parts (Chromi's frame.bend), keyed by the
+# layout's child ids (the button by its Kairo id) and two of their own for
+# the panel and the accent bar. Each part is recorded and compared every
+# frame; only parts that changed are planned and redrawn.
+def framed(m: Model, last: Fr.Frame) -> Fr.Frame:
+  Model{Assets{f, pic, heart}, cache, Texts{a, b, c, +d, e, pg, sv},
+    Places{+panel, +ta, tb, tc, +bt, te, +pic_at, pic_cap, +svg_at, svg_cap}, k, n, +w, +h} = m
+  p = Fr.begin(last, w, h, 1.0, background())
+  p = Fr.part(p, 10, s => S.border(S.round_rect(s, crect(panel), 18.0, panel_color()), crect(panel), 18.0,
+    1.0, line_color()))
+  p = Fr.part(p, 11, s => S.fill_rect(s, G.Rect{rx(ta), (ry(ta) - 14.0 : F32), 64.0, 4.0}, accent()))
+  p = Fr.part(p, 1, s => at(s, a, ta, ink()))
+  p = Fr.part(p, 2, s => at(s, b, tb, muted()))
+  p = Fr.part(p, 3, s => at(s, c, tc, ink()))
+  p = Fr.part(p, button_id(), s => button(M.button(button_node(bt), k, metrics(d), 18.0, M.theme()), s, d))
+  p = Fr.part(p, 5, s => at(s, e, te, muted()))
+  p = Fr.part(p, 6, s => Media.paint_picture(s, pic, rx(pic_at), ry(pic_at)))
+  p = Fr.part(p, 7, s => at(s, pg, pic_cap, muted()))
+  p = Fr.part(p, 8, s => Media.paint_svg(s, heart, rx(svg_at), ry(svg_at)))
+  Fr.end(Fr.part(p, 9, s => at(s, sv, svg_cap, muted())))

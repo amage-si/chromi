@@ -3,6 +3,7 @@ import ./main.bend as C
 import ./geometry.bend as G
 import ./color.bend as Color
 import ./scene.bend as S
+import ./frame.bend as F
 
 # The CPU reference renderer of a draw list (scene.bend): every operation
 # is painted into Chromi's quadtree canvas with the canvas's own blending
@@ -264,3 +265,69 @@ def pixels.of(c: C.Canvas) -> Result<&1, &1, U32 & String, Array<U32>>:
 # them; the array may be larger): what the GPU path must reproduce.
 def pixels(+s: S.Scene) -> Result<&1, &1, U32 & String, Array<U32>>:
   pixels.of(canvas(s))
+
+# Retained frames
+# ---------------
+
+# An operation painted only within `limit` (a damaged box).
+def op.within(c: C.Canvas, o: S.Op, +limit: G.Box) -> C.Canvas:
+  match o:
+    case S.Fill{box, color}:
+      C.physical(with_clip(c, limit), box, color)
+    case S.Round{x0, y0, x1, y1, r, b, color, clip}:
+      round(full(c), x0, y0, x1, y1, r, b, color, G.intersect(clip, limit))
+    case S.Bitmap{key, x, y, w, h, data, clip}:
+      samples(data, with_clip(c, G.intersect(clip, limit)), x, y, w, 0, False{}, 0)
+    case S.Mask{key, x, y, w, h, data, ink, clip}:
+      samples(data, with_clip(c, G.intersect(clip, limit)), x, y, w, 0, True{}, ink)
+
+def ops.within(os: List<&2, S.Op>, c: C.Canvas, +limit: G.Box) -> C.Canvas:
+  match os:
+    case Nil{}:
+      c
+    case o <> rest:
+      ops.within(rest, op.within(c, o, limit), limit)
+
+def part.within(hit: Bool, os: List<&2, S.Op>, c: C.Canvas, +limit: G.Box) -> C.Canvas:
+  match hit:
+    case False{}:
+      c
+    case True{}:
+      ops.within(os, c, limit)
+
+# Every part that meets the box, replayed within it, in order.
+def parts.within(ps: List<&2, F.Part>, c: C.Canvas, +limit: G.Box) -> C.Canvas:
+  match ps:
+    case Nil{}:
+      c
+    case Con{F.Part{id, st, +bounds, os, cache}, rest}:
+      parts.within(rest, part.within(G.meet(bounds, limit), os, c, limit), limit)
+
+def boxes.within(bs: List<&2, G.Box>, +ps: List<&2, F.Part>, c: C.Canvas, +bg: U32) -> C.Canvas:
+  match bs:
+    case Nil{}:
+      full(c)
+    case Con{+b, rest}:
+      boxes.within(rest, ps, parts.within(ps, C.physical(with_clip(c, b), b, bg), b), bg)
+
+def frame.sized(+f: F.Frame, size: U32 & U32) -> C.Canvas:
+  (w, h) = size
+  canvas.from(F.ops(f), w, h, F.background(f))
+
+# A retained frame painted whole on the CPU (as `canvas` paints a scene).
+def frame_canvas(+f: F.Frame) -> C.Canvas:
+  frame.sized(f, F.size(f))
+
+def repaint.pick(whole: Bool, c: C.Canvas, +f: F.Frame) -> C.Canvas:
+  match whole:
+    case True{}:
+      frame_canvas(f)
+    case False{}:
+      boxes.within(F.regions(f), F.parts(f), c, F.background(f))
+
+# Repaints only the frame's damage over `c`, the picture of the frame it
+# was built from: each damaged box is filled with the background, then
+# every part meeting it is replayed within it, in order. The result equals
+# painting the frame whole; a frame that must be drawn whole is.
+def repaint(c: C.Canvas, +f: F.Frame) -> C.Canvas:
+  repaint.pick(F.whole(f), c, f)

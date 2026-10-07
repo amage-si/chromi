@@ -63,6 +63,14 @@ How it was verified:
   once. It closed normally with 0 native objects left.
 - The shape example (`examples/shapes.bend`, official window) still builds;
   `tests/ankra.bend` passes its 2 companion checks.
+- **7 text cache checks** (`examples/eco/text_tests.bend`): the demo's text
+  (`examples/eco/text.bend`) keeps glyph masks by atlas key and prepared runs
+  by (text, size, width) in Voltra's key map; cached runs equal runs prepared
+  from scratch bit for bit, repeated texts are hits, a new width is a miss, a
+  font with another checksum starts an empty cache, 600 changing texts stay
+  within two generations of 256 runs, and runs sharing a hash never mix.
+  Rebuilding the demo's model after an activation costs ~0.1 ms of Bend work
+  (it was ~4 ms).
 
 ## Measurements
 
@@ -174,7 +182,7 @@ drawing.
 | [tree.bend](tree.bend) | Quadtree painting, compaction, sampling, and Base image output. |
 | [tests.bend](tests.bend) | Native renderer checks (no display, no GPU). |
 | [gpu_tests.bend](gpu_tests.bend) | GPU against CPU, pixel by pixel (GPU, no display). |
-| [examples/](examples/) | The integrated demo and its CPU variant, benchmarks, the shape scene. |
+| [examples/](examples/) | The integrated demo and its CPU variant, benchmarks, the shape scene; `eco/text.bend` and `eco/text_tests.bend` are the demo's cached text. |
 | [tests/ankra.bend](tests/ankra.bend) | Two companion checks for the official-window example. |
 | [docs/](docs/) | API and benchmark references. |
 

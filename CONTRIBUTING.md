@@ -15,6 +15,8 @@ bend tests.bend -o build/tests
 ./build/tests --threads 2 --gpu off
 bend gpu_tests.bend -o build/gpu_tests        # Voltra beside Chromi; a Vulkan GPU, no display
 ./build/gpu_tests --threads 2 --gpu off
+bend examples/eco/text_tests.bend -o build/text_tests
+./build/text_tests --threads 2 --gpu off
 ```
 
 `gpu_tests` must report 0 differing pixels in every scene. The examples need

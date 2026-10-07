@@ -75,11 +75,59 @@ error.
 | `S.draw(s, pixels, x, y, ink)` | Validated pixels at a logical origin floored to a physical pixel; masks in `ink`. No per-call pass over the samples. |
 | `S.ops(s)` | `Result<&1, &1, U32 & String, List<&2, Op>>`: the operations in drawing order, or the first error. |
 | `S.size(s)`, `S.background(s)`, `S.count(s)` | Surface size, background, number of operations. |
+| `S.visible(s, rect)` | Whether anything drawn within `rect` (logical units) could show: the whole pixels it covers meet the current clip. For skipping work whose operations would be culled anyway (laying out or painting a label far below the window). An invalid rectangle answers True. |
+| `S.same_ops(a, b)`, `S.bounds(ops, acc)`, `S.op_box(op)` | Whether two draw lists draw the same (bitmaps and masks compared by key); the surface pixels operations can touch. |
+
+**Culling.** A bitmap, mask or rounded box that cannot touch a pixel of its
+clip (outside the surface or the clip, or empty) is not recorded, like an
+empty fill. Such an operation painted nothing, so the picture is the same;
+content far outside the window then costs no planning, upload or drawing.
 
 `Op`: `Fill{box, color}`, `Round{x0, y0, x1, y1, radius, border, color, clip}`
 (1/8-pixel signed coordinates; border 0 fills), `Bitmap{key, x, y, width,
 height, pixels, clip}`, `Mask{key, x, y, width, height, coverage, ink, clip}`
 (physical signed origins; clip boxes in physical pixels).
+
+## Retained frames (`frame.bend`)
+
+A `F.Frame` is a frame as parts in drawing order. Each `F.Part{id, stamp,
+bounds, ops, cache}` has a stable `id` chosen by the app (the Kairo or Mokko
+id of a control, the layout id of a block), its draw list, the box of
+surface pixels that list can touch, and what a renderer derived from it
+(`cache`: `Unplanned{}` or `Planned{epoch, quads, words}`, the GPU path's
+packed quads). Each part is a separate draw list starting with the whole
+surface as its clip. A frame is built from the last one:
+
+| Function | Contract |
+| --- | --- |
+| `F.none()` | The frame before the first; the next one is drawn whole. |
+| `F.begin(last, w, h, scale, background)` | A builder (`F.Build`). Parts of `last` are kept only on the same surface (size, scale, background); otherwise every part is recorded again and the frame is whole. Damage `last` still carried (it was never drawn) carries over. |
+| `F.part(b, id, draw)` | `draw: S.Scene -> S.Scene` records the part into an empty scene of the surface, every frame. When the last frame's part with this id recorded the same operations (`S.same_ops`), that part is kept, cache included, and nothing is damaged; otherwise the new part replaces it and both boxes are damaged. |
+| `F.stamped(b, id, stamp, draw)` | Records the part only when its `stamp` differs from the kept part's (or no part has the id): the app promises that an equal stamp draws the same. For large content that rarely changes. |
+| `F.end(b)` | The frame. Parts of the last frame not met again were removed: their boxes are damaged. A part whose scene failed fails the frame (`F.Failed{message}`). |
+| `F.blank(b)` | An empty scene of the builder's surface. |
+| `F.regions(f)` | The damage within the surface, boxes joined where they meet (they may still overlap: a pixel redrawn twice gets the same value). Empty when nothing changed. |
+| `F.whole(f)`, `F.damage(f)`, `F.parts(f)`, `F.size(f)`, `F.background(f)`, `F.count(f)` | Whether it must be drawn whole; the raw damage boxes; parts; surface; part count. |
+| `F.ops(f)` | Every part's operations in order: the draw list of the same calls made on one scene. |
+| `F.drawn(f, parts)` | The frame as a renderer leaves it: these parts, no damage, not whole. |
+| `F.area(boxes, 0)`, `F.touched(boxes, box)` | Pixels in the boxes; whether a box meets any of them. |
+
+Parts are matched by id in order: a part is normally found at once, and a
+part moved, added or removed costs a scan of the parts left. The damage of a
+changed part is its old and its new box; added and removed parts damage
+their box; a reordered part damages what it overlaps.
+
+A typical frame (Chromi's `examples/eco/grid.bend`):
+
+```bend
+def frame(m: Grid, last: F.Frame) -> F.Frame:
+  b = F.begin(last, w, h, 1.0, background())
+  b = F.part(b, button_id(), s => U.button(view, s, label))   # Kairo's id
+  b = F.part(b, 2, s => paint_counter(s, counter))
+  F.end(F.stamped(b, 3, 1, s => paint_cells(cells, s)))       # labels
+```
+
+The app keeps the frame `Gpu.render` answers and builds the next one from it.
 
 ## CPU reference (`replay.bend`)
 
@@ -89,6 +137,8 @@ height, pixels, clip}`, `Mask{key, x, y, width, height, coverage, ink, clip}`
 | `R.image(s)` | `C.finish` of that canvas: a `Base.Image` for the official window. |
 | `R.pixels(s)` | Row-major `0xRRGGBBAA` words (`w * h` of them; the array may be larger): what the GPU path must reproduce. |
 | `R.coverage(px, py, x0, y0, x1, y1, r, b)` | Coverage 0..255 of a pixel by a rounded box (`b` 0) or ring. |
+| `R.frame_canvas(f)` | A retained frame painted whole (as `canvas` paints a scene). |
+| `R.repaint(c, f)` | Paints only `f`'s damage over `c`, the picture of the frame `f` was built from: each damaged box is filled with the background, then every part meeting it is replayed within it, in order. Equals `frame_canvas(f)`; a frame that must be drawn whole is. |
 
 Rounded coverage: 4x4 samples per pixel at 1/8, 3/8, 5/8 and 7/8 of the pixel
 on each axis, in 1/8-pixel integers. A sample is inside a box with radius `r`
@@ -111,3 +161,5 @@ Requires [Voltra](https://github.com/amage-si/voltra) beside Chromi.
 | `Gpu.resize(r, w, h)`, `Gpu.pending(r)`, `Gpu.invalidate(r)`, `Gpu.target_size(r)`, `Gpu.close(r)` | Voltra's, through the renderer. |
 | `Gpu.uploaded(r)`, `Gpu.entries(r)`, `Gpu.resets(r)` | Texels uploaded so far, atlas entries, atlas restarts. |
 | `Gpu.plan(ops, atlas)` | The pure part of `draw`: quads, regions to upload, and whether something found no room. |
+| `Gpu.render(r, f)` | `IO(Renderer & F.Frame)`. Draws a retained frame on Voltra's canvas and answers it as drawn (its parts with their planned words, no damage). Each damaged region is redrawn alone: the background, then the quads of every part that meets it, scissored to the region (Voltra's `paint`); the present names the regions. A part's quads are planned (atlas, packing) when it is first drawn and kept in the part while the atlas lasts (its epoch), so a kept part costs no lookup or packing; atlas content the frame needs is uploaded inside the frame. Drawn whole when the frame asks for it, when the canvas does not hold the last picture, or when the damage covers more than half of the surface. A failed frame ends the program. A frame's planned words belong to the renderer that drew it. |
+| `Gpu.last_quads(r)`, `Gpu.last_partial(r)` | Quads uploaded and drawn by the last `render`, and whether it redrew only damage (0 and False after `draw`). |

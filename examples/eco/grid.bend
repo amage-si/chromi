@@ -51,14 +51,14 @@ type Cell is Data:
   Cell{x: F32, y: F32, run: T.Run}
 
 type Grid is Data:
-  Grid{font: F.Font, cache: List<&2, T.Glyph>, label: T.Run, counter: T.Run, cells: List<&2, Cell>,
+  Grid{font: F.Font, cache: T.Cache, label: T.Run, counter: T.Run, cells: List<&2, Cell>,
     kairo: KT.State, clicks: U32, width: U32, height: U32}
 
 def run_of(p: T.Prepared) -> T.Run:
   T.Prepared{r, c} = p
   r
 
-def cache_of(p: T.Prepared) -> List<&2, T.Glyph>:
+def cache_of(p: T.Prepared) -> T.Cache:
   T.Prepared{r, c} = p
   c
 
@@ -78,10 +78,10 @@ def cell_y(+i: U32) -> F32:
   (64.0 + U32.to_f32((i / columns() : U32)) * 12.0 : F32)
 
 type Cells is Data:
-  Cells{cells: List<&2, Cell>, cache: List<&2, T.Glyph>}
+  Cells{cells: List<&2, Cell>, cache: T.Cache}
 
 # Labels i .. i + n - 1 (0-based), prepared with the shared glyph cache.
-def cells.go(n: Nat, +i: U32, +font: F.Font, +cache: List<&2, T.Glyph>, acc: List<&2, Cell>) ->
+def cells.go(n: Nat, +i: U32, +font: F.Font, +cache: T.Cache, acc: List<&2, Cell>) ->
   Result<&2, &2, String, Cells>:
   match n:
     case 0n:
@@ -107,7 +107,7 @@ def built(+font: F.Font, label: T.Prepared, counter: T.Prepared, cs: Cells, +k: 
 
 def build(+font: F.Font, +n: U32, +w: U32, +h: U32) -> Result<&2, &2, String, Grid>:
   do Result<&2, &2, String, Grid>:
-    +label : T.Prepared <- T.prepare(font, U.label(), 18.0, 1000000.0, Nil{})
+    +label : T.Prepared <- T.prepare(font, U.label(), 18.0, 1000000.0, T.cache())
     +counter : T.Prepared <- T.prepare(font, counter_text(0), 16.0, 1000000.0, cache_of(label))
     +cs : Cells <- cells.go(U32.to_nat(n), 0, font, cache_of(counter), Nil{})
     +k : KT.State <- U.started(K.init([U.button_node(button_rect(run_of(label)))], U32.to_f32(w), U32.to_f32(h)))
@@ -126,7 +126,7 @@ def font_of(m: Grid) -> F.Font:
   Grid{f, cache, l, c, cells, k, n, w, h} = m
   f
 
-def glyph_cache(m: Grid) -> List<&2, T.Glyph>:
+def glyph_cache(m: Grid) -> T.Cache:
   Grid{f, cache, l, c, cells, k, n, w, h} = m
   cache
 
@@ -159,7 +159,7 @@ def size_of(m: Grid) -> U32 & U32:
 
 def glyphs(m: Grid) -> U32:
   Grid{f, cache, l, c, cells, k, n, w, h} = m
-  U32.from_nat(List.length(&2, T.Glyph, cache))
+  T.glyph_count(cache)
 
 # The frame
 # ---------

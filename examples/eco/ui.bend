@@ -84,7 +84,7 @@ type Places is Data:
     status: TG.Rect, png: TG.Rect, png_caption: TG.Rect, svg: TG.Rect, svg_caption: TG.Rect}
 
 type Model is Data:
-  Model{assets: Assets, cache: List<&2, T.Glyph>, texts: Texts, places: Places,
+  Model{assets: Assets, cache: T.Cache, texts: Texts, places: Places,
     kairo: KT.State, clicks: U32, width: U32, height: U32}
 
 def f32(+n: U32) -> F32:
@@ -94,9 +94,9 @@ def f32(+n: U32) -> F32:
 # ----
 
 type Grown is Data:
-  Grown{texts: Texts, cache: List<&2, T.Glyph>}
+  Grown{texts: Texts, cache: T.Cache}
 
-def grow(p: T.Prepared) -> T.Run & List<&2, T.Glyph>:
+def grow(p: T.Prepared) -> T.Run & T.Cache:
   T.Prepared{r, c} = p
   (r, c)
 
@@ -104,11 +104,11 @@ def run_of(p: T.Prepared) -> T.Run:
   T.Prepared{r, c} = p
   r
 
-def cache_of(p: T.Prepared) -> List<&2, T.Glyph>:
+def cache_of(p: T.Prepared) -> T.Cache:
   T.Prepared{r, c} = p
   c
 
-def texts(+font: F.Font, +column: F32, +clicks: U32, +cache: List<&2, T.Glyph>) ->
+def texts(+font: F.Font, +column: F32, +clicks: U32, +cache: T.Cache) ->
   Result<&2, &2, String, Grown>:
   do Result<&2, &2, String, Grown>:
     +a : T.Prepared <- T.prepare(font, title(), 34.0, column, cache)
@@ -231,7 +231,7 @@ def grown_texts(g: Grown) -> Texts:
 def build(+a: Assets, +w: U32, +h: U32) -> Result<&2, &2, String, Model>:
   Assets{+font, pic, heart} = a
   do Result<&2, &2, String, Model>:
-    +g : Grown <- texts(font, column(w), 0, Nil{})
+    +g : Grown <- texts(font, column(w), 0, T.cache())
     +p : Places <- arrange(grown_texts(g), w, h)
     +k : KT.State <- started(K.init([button_node(places_button(p))], f32(w), f32(h)))
     return built(a, g, p, k, 0, w, h)
@@ -274,7 +274,7 @@ def with_kairo(m: Model, +k: KT.State) -> Model:
 
 def glyphs(m: Model) -> U32:
   Model{a, c, t, p, k, n, w, h} = m
-  U32.from_nat(List.length(&2, T.Glyph, c))
+  T.glyph_count(c)
 
 # The frame
 # ---------

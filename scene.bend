@@ -19,6 +19,9 @@ import ./geometry.bend as G
 #           clip.
 # Bitmaps and masks carry a key chosen by the caller: the same key must
 # always mean the same pixels, so a GPU renderer can upload them once.
+# An operation that cannot touch a pixel of its clip (outside the surface
+# or the clip, or empty) is not recorded at all, so content far outside
+# the window costs no planning, upload or drawing.
 # Coordinates of Round, Bitmap and Mask are signed 32-bit values in U32
 # bits; colors are straight RGBA8 0xRRGGBBAA in encoded sRGB.
 
@@ -136,12 +139,26 @@ def to_i32(+v: F32) -> U32:
 def eighths(+v: F32, +scale: F32) -> U32:
   to_i32(F32.round((v * scale * 8.0 : F32)))
 
+# The whole pixels a rounded box in 1/8 pixels can cover.
+def round.pixels(+clip: G.Box, +x0: U32, +y0: U32, +x1: U32, +y1: U32) -> G.Box:
+  +px = G.floor8(x0)
+  +py = G.floor8(y0)
+  G.cover(clip, px, py, (G.ceil8(x1) - px : U32), (G.ceil8(y1) - py : U32))
+
+def round.keep(seen: Bool, op: Op, ops: List<&2, Op>) -> List<&2, Op>:
+  match seen:
+    case True{}:
+      op <> ops
+    case False{}:
+      ops
+
 def round.push(s: Scene, +x0: U32, +y0: U32, +x1: U32, +y1: U32, +r: U32, +b: U32, +color: U32) -> Scene:
   match s:
     case Failed{message}:
       Failed{message}
     case Scene{w, h, sc, bg, +clip, ops}:
-      Scene{w, h, sc, bg, clip, Round{x0, y0, x1, y1, r, b, color, clip} <> ops}
+      Scene{w, h, sc, bg, clip, round.keep(Bool.not(G.empty(round.pixels(clip, x0, y0, x1, y1))),
+        Round{x0, y0, x1, y1, r, b, color, clip}, ops)}
 
 def round.visible(visible: Bool, s: Scene, +x0: U32, +y0: U32, +x1: U32, +y1: U32,
   +r: U32, +b: U32, +color: U32) -> Scene:
@@ -231,7 +248,7 @@ def image.push(valid: Bool, s: Scene, +key: U32, +x: F32, +y: F32, +width: U32, 
     case True{} Scene{w, h, +sc, bg, +clip, ops}:
       +px = to_i32(F32.floor((x * sc : F32)))
       +py = to_i32(F32.floor((y * sc : F32)))
-      Scene{w, h, sc, bg, clip, image.keep(U32.is_eq((width * height : U32), 0),
+      Scene{w, h, sc, bg, clip, image.keep(Bool.not(G.meets(clip, px, py, width, height)),
         image.op(mask, key, px, py, width, height, data, ink, clip), ops)}
 
 def image.bounds(valid: Bool, s: Scene, +key: U32, +x: F32, +y: F32, +width: U32, +height: U32,
@@ -332,3 +349,81 @@ def count(s: Scene) -> U32:
       0
     case Scene{w, h, sc, bg, clip, ops}:
       U32.from_nat(List.length(&2, Op, ops))
+
+# Parts of retained frames
+# ------------------------
+# (frame.bend keeps parts of a frame from one frame to the next.)
+
+def visible.of(valid: Bool, +clip: G.Box, rect: G.Rect, +sc: F32) -> Bool:
+  match valid:
+    case False{}:
+      True{}
+    case True{}:
+      G.Rect{+x, +y, +w, +h} = rect
+      +x0 = to_i32(F32.floor((x * sc : F32)))
+      +y0 = to_i32(F32.floor((y * sc : F32)))
+      G.meets(clip, x0, y0, (to_i32(F32.ceil(((x + w) * sc : F32))) - x0 : U32),
+        (to_i32(F32.ceil(((y + h) * sc : F32))) - y0 : U32))
+
+# Whether anything drawn within `rect` (logical units) could show: the
+# whole pixels it covers meet the current clip. For skipping work whose
+# operations would be culled anyway (laying out or painting text far
+# outside the window); an invalid rectangle answers True.
+def visible(s: Scene, +rect: G.Rect) -> Bool:
+  match s:
+    case Failed{message}:
+      False{}
+    case Scene{w, h, +sc, bg, +clip, ops}:
+      visible.of(G.valid(rect), clip, rect, sc)
+
+def same_box(a: G.Box, b: G.Box) -> Bool:
+  G.Box{ax, ay, ar, ab} = a
+  G.Box{bx, by, br, bb} = b
+  U32.is_eq(ax, bx) && U32.is_eq(ay, by) && U32.is_eq(ar, br) && U32.is_eq(ab, bb)
+
+# Whether two operations draw the same pixels. Bitmaps and masks compare
+# by key (the same key always means the same pixels), not sample by sample.
+def same_op(a: Op, b: Op) -> Bool:
+  match a b:
+    case Fill{ab, ac} Fill{bb, bc}:
+      same_box(ab, bb) && U32.is_eq(ac, bc)
+    case Round{ax0, ay0, ax1, ay1, ar, abd, ac, aclip} Round{bx0, by0, bx1, by1, br, bbd, bc, bclip}:
+      U32.is_eq(ax0, bx0) && U32.is_eq(ay0, by0) && U32.is_eq(ax1, bx1) && U32.is_eq(ay1, by1) &&
+        U32.is_eq(ar, br) && U32.is_eq(abd, bbd) && U32.is_eq(ac, bc) && same_box(aclip, bclip)
+    case Bitmap{ak, ax, ay, aw, ah, ad, aclip} Bitmap{bk, bx, by, bw, bh, bd, bclip}:
+      U32.is_eq(ak, bk) && U32.is_eq(ax, bx) && U32.is_eq(ay, by) && U32.is_eq(aw, bw) &&
+        U32.is_eq(ah, bh) && same_box(aclip, bclip)
+    case Mask{ak, ax, ay, aw, ah, ad, ai, aclip} Mask{bk, bx, by, bw, bh, bd, bi, bclip}:
+      U32.is_eq(ak, bk) && U32.is_eq(ax, bx) && U32.is_eq(ay, by) && U32.is_eq(aw, bw) &&
+        U32.is_eq(ah, bh) && U32.is_eq(ai, bi) && same_box(aclip, bclip)
+    case _ _:
+      False{}
+
+def same_ops(a: List<&2, Op>, b: List<&2, Op>) -> Bool:
+  match a b:
+    case Nil{} Nil{}:
+      True{}
+    case Con{x, xs} Con{y, ys}:
+      same_op(x, y) && same_ops(xs, ys)
+    case _ _:
+      False{}
+
+# The surface pixels an operation can touch.
+def op_box(o: Op) -> G.Box:
+  match o:
+    case Fill{box, color}:
+      box
+    case Round{x0, y0, x1, y1, r, b, color, clip}:
+      round.pixels(clip, x0, y0, x1, y1)
+    case Bitmap{key, x, y, w, h, data, clip}:
+      G.cover(clip, x, y, w, h)
+    case Mask{key, x, y, w, h, data, ink, clip}:
+      G.cover(clip, x, y, w, h)
+
+# The box holding every pixel the operations can touch, joined to `acc`.
+def bounds(os: List<&2, Op>, +acc: G.Box) -> G.Box:
+  match os:
+    case Nil{}:
+      acc
+    case Con{o, rest}:
+      bounds(rest, G.union(acc, op_box(o)))

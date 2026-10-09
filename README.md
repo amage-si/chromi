@@ -16,11 +16,12 @@ changed. Both produce the same bytes: every scene and every partial frame in
 the GPU checks compared equal to the CPU reference, pixel for pixel. The core
 and its native tests depend only on the official Bend `Base` library.
 
-![The integrated demo: text, a button, a PNG and an SVG, drawn by Chromi and presented by Voltra in an Ankra window.](docs/eco.png)
+![The integrated demo: text, a button, a text field, a PNG and an SVG, drawn by Chromi and presented by Voltra in an Ankra window.](docs/eco.png)
 
 The capture above is `examples/eco`, captured from its own window only. Text
-comes from Runika, Syllo and Dithra; the button from Mokko and Kairo; the
-layout from Tessra; the PNG is decoded by Ocula and the SVG parsed by Splina.
+comes from Runika, Syllo and Dithra; the button and the text field from Mokko
+and Kairo, typed text and the clipboard from Ankra; the layout from Tessra;
+the PNG is decoded by Ocula and the SVG parsed by Splina.
 The capture equals Chromi's CPU reference of the same frame in all 504,000
 pixels.
 
@@ -90,6 +91,21 @@ How it was verified:
   the demo (Tab, two activations, resizes to 1100x700, 640x760 and 900x560)
   and the 5000-label grid (Tab, two activations) captured at every step equal
   the previous full-redraw binaries pixel for pixel.
+- **Editable text field in the demo** (Mokko's `field.bend`, ids 12 and 13:
+  the field and its note). On the real window, with keys sent by XTest while
+  the window had focus (br-abnt2 keymap) and the pointer by events sent to
+  the window alone: Tab reached the field; "Olá, ação!" typed with dead keys;
+  a held Backspace repeated; Shift+Home selected; Ctrl+C then `wl-paste`
+  printed the text; `wl-copy café` then Ctrl+V inserted it (the paste asked
+  the owner and the answer arrived in a later batch); "€" was refused whole
+  with the error border and "Character U+20AC cannot be displayed"; a click
+  placed the caret and a drag selected; Space in the field typed a space and
+  never activated the button, while Space on the button still did. Each
+  keystroke was a partial frame of 15,840 pixels (the field's 360x44 box),
+  plus the note's box when the message changed; key to presented frame
+  0.77 ms median (p90 0.94, 17 keys). Unfocused idle: 0 frames and 0
+  main-thread wakeups in 5 s. The first frame equals the CPU reference at
+  900x560 (0 differing pixels).
 - The shape example (`examples/shapes.bend`, official window) still builds;
   `tests/ankra.bend` passes its 2 companion checks.
 - **7 text cache checks** (`examples/eco/text_tests.bend`): the demo's text
@@ -174,8 +190,11 @@ bend examples/eco/main.bend -o build/eco              # about 85 s, 3.8 GB peak
 ./build/eco --threads 2 --gpu off                      # run from Chromi/
 ```
 
-Click the button, use Tab and Space or Enter, resize the window, close it
-normally. The program prints one line per redraw and per input batch. See
+Click the button, use Tab and Space or Enter, Tab again to the text field and
+type (dead keys and AltGr work; Ctrl+C/X/V and Shift+Insert use the
+clipboard), resize the window, close it normally. The program prints one line
+per redraw (with the damaged area) and per input batch (with the field's text
+after it). See
 [examples/README.md](examples/README.md) for the other examples, the CPU
 variant and the benchmarks.
 

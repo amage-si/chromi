@@ -15,16 +15,25 @@ import ../../../Kairo/edit.bend as KE
 import ../../../Mokko/field.bend as FL
 import ../../../Tessra/geometry.bend as TG
 import ../../../Voltra/gpu.bend as V
+import ./access.bend as Acc
+import ../../../Auvia/model.bend as AM
+import ../../../Auvia/kairo.bend as AK
+import ../../../Auvia/field.bend as AF
+import ../../../Auvia/service.bend as AS
 
 # The integrated demo, GPU-presented: Ankra owns the window and its
 # events, the text input and the clipboard, Kairo the interaction state
 # and the editing, Tessra the layout, Runika, Syllo and Dithra the text,
 # Ocula the PNG, Splina the SVG, Mokko the button and the text field,
 # Chromi the frame as a draw list, and Voltra draws that list on the GPU.
+# Auvia publishes it to assistive technologies (access.bend) and routes
+# their requests through the same Kairo and field paths as the user's own
+# input.
 #
 # The frame is redrawn only when something visible changed (hover, press,
 # focus, a click, an edit, a new size, an expose); between changes the
-# program waits for events without a deadline. An edit redraws only the
+# program waits for events without a deadline, on the window and on the
+# accessibility bus at once (Ankra's `watch`). An edit redraws only the
 # field and its note. Resize the window: the layout
 # follows. Close it normally. Run from the Chromi directory (the SVG path
 # is relative; the PNG and the font are system files).
@@ -43,6 +52,20 @@ def title() -> String:
 
 type Demo is Data:
   Demo{renderer: Gpu.Renderer, model: U.Model, shown: Fr.Frame, redraws: U32, started: Nat, clip: Clip.Clip}
+
+# The loop's state: the demo and its accessibility service, which owns a
+# socket and so is not Data. `Alias` boxes the pair (nothing builds it), so
+# the state crosses the loop as one pointer.
+type Eco is Type:
+  Eco{demo: Demo, a11y: AS.Service}
+  Alias{eco: Eco}
+
+def parts(e: Eco) -> Demo & AS.Service:
+  match e:
+    case Eco{d, s}:
+      (d, s)
+    case Alias{x}:
+      parts(x)
 
 def need(-A: Data, r: Result<&2, &2, String, A>) -> IO(A):
   match r:
@@ -105,6 +128,55 @@ def fold(xs: List<&2, KT.Input>, +font: F.Font, +at: TG.Rect, f: Fold) -> Fold:
       +c = K.dispatch(k, x)
       fold(rest, font, at, Fold{K.next(c), (a + activated(c) : U32), d || changed(c),
         feed(actions_of(c), font, at, e)})
+
+# Requests from assistive technologies join the batch after the window's
+# input: a button or focus request goes through Kairo as a click or Tab
+# would (Auvia's `route`), a text request through the field at its bounds
+# as typing does (Auvia's `edit`), so the same refusals apply. Each verdict
+# is kept for the service (`settle`).
+type Verdict is Data:
+  Verdict{request: AM.Request, ok: Bool}
+
+type Heard is Data:
+  Heard{fold: Fold, verdicts: List<&2, Verdict>}
+
+def routed(got: AK.Routed, +font: F.Font, +at: TG.Rect, +a: U32, +d: Bool, e: Edits) -> Fold & Bool:
+  AK.Routed{+c, ok} = got
+  (Fold{K.next(c), (a + activated(c) : U32), d || changed(c), feed(actions_of(c), font, at, e)}, ok)
+
+def edited(got: AF.Edited, +k: KT.State, +a: U32, +d: Bool, +was: Bool, rs: List<&2, KE.Request>) -> Fold & Bool:
+  AF.Edited{FL.Fed{f, +dirty, r}, ok} = got
+  (Fold{k, a, d, Edits{f, was || dirty, request.push(r, rs)}}, ok)
+
+def hear.of(r: AM.Request, +font: F.Font, +at: TG.Rect, +k: KT.State, +a: U32, +d: Bool, e: Edits) -> Fold & Bool:
+  match r:
+    case AM.EditText{id, op, t}:
+      Edits{field, +was, rs} = e
+      edited(AF.edit(font, U.field_px(), at, k, U.field_id(), field, {AM.EditText{id, op, t} : AM.Request}), k, a, d, was, rs)
+    case AM.Activate{id, i}:
+      routed(AK.route(k, {AM.Activate{id, i} : AM.Request}), font, at, a, d, e)
+    case AM.Focus{id}:
+      routed(AK.route(k, {AM.Focus{id} : AM.Request}), font, at, a, d, e)
+
+def heard(+r: AM.Request, got: Fold & Bool, vs: List<&2, Verdict>) -> Heard:
+  (f, ok) = got
+  Heard{f, Con{Verdict{r, ok}, vs}}
+
+def hear(rs: List<&2, AM.Request>, +font: F.Font, +at: TG.Rect, h: Heard) -> Heard:
+  match rs:
+    case Nil{}:
+      h
+    case Con{+r, rest}:
+      Heard{Fold{+k, +a, +d, e}, vs} = h
+      hear(rest, font, at, heard(r, hear.of(r, font, at, k, a, d, e), vs))
+
+def heard_fold(h: Heard) -> Fold:
+  Heard{f, vs} = h
+  f
+
+def heard_verdicts(h: Heard) -> List<&2, Verdict>:
+  Heard{f, vs} = h
+  List.reverse(&2, Verdict, vs)
 
 # The clipboard's side of the edits: a copy takes the clipboard; a paste
 # of our own clipboard is typed at once as Kairo text, a paste of another
@@ -307,15 +379,140 @@ def update.folded(+win: A.Win, +es: List<&2, A.Input>, +app: Demo, +now: Nat, f:
       Served{c1, k, Edits{field, edited, Nil{}}})
     update.served(win, es, app, a, d, now, s)
 
-# Window events through Kairo and the field; a new size or a click redoes
-# the layout, an edit the field's text and note.
-def update(win: A.Win, batch: List<&2, A.Input>, state: Demo) -> IO(Loop.Step<Demo>):
+# Accessibility
+# -------------
+
+# The window's last reported position in a batch, for screen coordinates.
+type Spot is Data:
+  Spot{x: F32, y: F32}
+
+def moved(es: List<&2, A.Input>, last: Maybe<&2, Spot>) -> Maybe<&2, Spot>:
+  match es:
+    case Nil{}:
+      last
+    case Con{A.Moved{x, y}, rest}:
+      moved(rest, Some{Spot{x, y}})
+    case Con{e, rest}:
+      moved(rest, last)
+
+def placed(m: Maybe<&2, Spot>, svc: AS.Service) -> AS.Service:
+  match m:
+    case None{}:
+      svc
+    case Some{Spot{x, y}}:
+      AS.moved(svc, x, y)
+
+def focus_changed(es: List<&2, A.Input>) -> Bool:
+  match es:
+    case Nil{}:
+      False{}
+    case Con{A.Focused{g}, rest}:
+      True{}
+    case Con{e, rest}:
+      focus_changed(rest)
+
+def settle_all(vs: List<&2, Verdict>, svc: AS.Service) -> AS.Service:
+  match vs:
+    case Nil{}:
+      svc
+    case Con{Verdict{r, ok}, rest}:
+      settle_all(rest, AS.settle(svc, r, ok))
+
+def op_word(op: AM.TextOp) -> String:
+  match op:
+    case AM.SetCaret{o}:
+      "caret"
+    case AM.Select{a, b}:
+      "select"
+    case AM.SetContents{t}:
+      "set text"
+    case AM.Insert{o, t}:
+      "insert \"" ++ t ++ "\""
+    case AM.Delete{a, b}:
+      "delete " ++ U32.show(a) ++ "-" ++ U32.show(b)
+    case AM.Copy{a, b}:
+      "copy"
+    case AM.Cut{a, b}:
+      "cut"
+    case AM.Paste{o}:
+      "paste"
+
+def request_word(r: AM.Request) -> String:
+  match r:
+    case AM.Activate{id, i}:
+      "activate " ++ U32.show(id)
+    case AM.Focus{id}:
+      "focus " ++ U32.show(id)
+    case AM.EditText{id, op, t}:
+      "text " ++ U32.show(id) ++ " " ++ op_word(op)
+
+def said(vs: List<&2, Verdict>) -> IO(Unit):
+  match vs:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case Con{Verdict{r, ok}, rest}:
+      do IO<Unit>:
+        IO.print("a11y: " ++ request_word(r) ++ Bool.pick(String, ok, " done", " refused"))
+        said(rest)
+
+# The tree goes out after anything that may have changed what it says: a
+# redraw, a request, a change of window focus. An unchanged tree sends
+# nothing.
+def told(publish: Bool, +win: A.Win, d: Demo, svc: AS.Service) -> IO(AS.Service):
+  match publish:
+    case False{}:
+      IO.pure(AS.Service, svc)
+    case True{}:
+      AS.publish(svc, Acc.tree(model_of(d), title(), A.focused(win)))
+
+def announced(+win: A.Win, step: Loop.Step<Demo>, svc: AS.Service, +asked: Bool) -> IO(Loop.Step<Eco>):
+  match step:
+    case Loop.Keep{+d}:
+      do IO<Loop.Step<Eco>>:
+        s : AS.Service <- told(asked, win, d, svc)
+        return Loop.Keep{Eco{d, s}}
+    case Loop.Redraw{+d}:
+      do IO<Loop.Step<Eco>>:
+        s : AS.Service <- told(True{}, win, d, svc)
+        return Loop.Redraw{Eco{d, s}}
+    case Loop.Sleep{+d, ms}:
+      do IO<Loop.Step<Eco>>:
+        s : AS.Service <- told(asked, win, d, svc)
+        return Loop.Sleep{Eco{d, s}, ms}
+    case Loop.Stop{+d}:
+      do IO<Loop.Step<Eco>>:
+        s : AS.Service <- told(asked, win, d, svc)
+        return Loop.Stop{Eco{d, s}}
+
+def attended(+win: A.Win, +es: List<&2, A.Input>, +app: Demo, +now: Nat, inputs: List<&2, KT.Input>,
+  svc: AS.Service, +rs: List<&2, AM.Request>) -> IO(Loop.Step<Eco>):
+  +h = hear(rs, font_of(app), field_at(app), Heard{fold(inputs, font_of(app), field_at(app), started_fold(app)), Nil{}})
+  do IO<Loop.Step<Eco>>:
+    said(heard_verdicts(h))
+    step : Loop.Step<Demo> <- update.folded(win, es, app, now, heard_fold(h))
+    announced(win, step, settle_all(heard_verdicts(h), svc), Bool.not(List.is_empty(&2, AM.Request, rs)) || focus_changed(es))
+
+def pumped(+win: A.Win, +es: List<&2, A.Input>, +app: Demo, +now: Nat, inputs: List<&2, KT.Input>,
+  got: AS.Service & List<&2, AM.Request>) -> IO(Loop.Step<Eco>):
+  (svc, rs) = got
+  attended(win, es, app, now, inputs, svc, rs)
+
+# One turn: the window's events through Kairo and the field, then what
+# assistive technologies asked (each request once, in arrival order); a
+# new size or a click redoes the layout, an edit the field's text and
+# note. The bus is read every turn; it ends the wait itself when a call
+# arrives.
+def update.eco(win: A.Win, batch: List<&2, A.Input>, p: Demo & AS.Service) -> IO(Loop.Step<Eco>):
+  (app, svc) = p
   +es = batch
-  +app = state
-  do IO<Loop.Step<Demo>>:
+  do IO<Loop.Step<Eco>>:
     +now : Nat <- IO.now()
     +inputs : List<&2, KT.Input> <- need(List<&2, KT.Input>, AA.normalize(es, 1.0))
-    update.folded(win, es, app, now, fold(inputs, font_of(app), field_at(app), started_fold(app)))
+    got : AS.Service & List<&2, AM.Request> <- AS.pump(placed(moved(es, None{}), svc))
+    pumped(win, es, app, now, inputs, got)
+
+def update(win: A.Win, batch: List<&2, A.Input>, state: Eco) -> IO(Loop.Step<Eco>):
+  update.eco(win, batch, parts(state))
 
 # Drawing
 # -------
@@ -336,7 +533,7 @@ def drawn(got: Gpu.Renderer & Fr.Frame, +m: U.Model, +n: U32, +t: Nat, +t0: Nat,
 # The frame is retained (Chromi's frame.bend): only what changed since the
 # last one is planned and redrawn. The report gives the damaged area in
 # pixels (the regions a partial frame redraws).
-def draw(win: A.Win, app: Demo) -> IO(Loop.Step<Demo>):
+def draw.demo(win: A.Win, app: Demo) -> IO(Loop.Step<Demo>):
   Demo{+r, +m, last, +n, +t, clip} = app
   do IO<Loop.Step<Demo>>:
     +t0 : Nat <- IO.now()
@@ -344,11 +541,30 @@ def draw(win: A.Win, app: Demo) -> IO(Loop.Step<Demo>):
     got : Gpu.Renderer & Fr.Frame <- Gpu.render(r, f)
     drawn(got, m, n, t, t0, Fr.area(Fr.regions(f), 0), clip)
 
+def rewrap(step: Loop.Step<Demo>, svc: AS.Service) -> Loop.Step<Eco>:
+  match step:
+    case Loop.Keep{d}:
+      Loop.Keep{Eco{d, svc}}
+    case Loop.Redraw{d}:
+      Loop.Redraw{Eco{d, svc}}
+    case Loop.Sleep{d, ms}:
+      Loop.Sleep{Eco{d, svc}, ms}
+    case Loop.Stop{d}:
+      Loop.Stop{Eco{d, svc}}
+
+def draw.eco(win: A.Win, p: Demo & AS.Service) -> IO(Loop.Step<Eco>):
+  (app, svc) = p
+  do IO<Loop.Step<Eco>>:
+    step : Loop.Step<Demo> <- draw.demo(win, app)
+    return rewrap(step, svc)
+
+def draw(win: A.Win, state: Eco) -> IO(Loop.Step<Eco>):
+  draw.eco(win, parts(state))
+
 # Startup and teardown
 # --------------------
 
-def finish(end: A.Win & Demo) -> IO(Unit):
-  (win, app) = end
+def finish.demo(win: A.Win, app: Demo) -> IO(Unit):
   Demo{+r, +m, s, +n, t, c} = app
   do IO<Unit>:
     IO.print("frames presented: " ++ U32.show(V.drawn(Gpu.gpu(r))) ++ ", redraws: " ++ U32.show(n) ++
@@ -357,6 +573,49 @@ def finish(end: A.Win & Demo) -> IO(Unit):
     IO.print(V.report.show(report))
     +left : U32 <- A.close(win)
     IO.print("window objects left: " ++ U32.show(left))
+
+# The accessibility connection is closed first, then the GPU and the window.
+def finish.eco(win: A.Win, p: Demo & AS.Service) -> IO(Unit):
+  (app, svc) = p
+  do IO<Unit>:
+    AS.stop(svc)
+    IO.print("accessibility connection closed")
+    finish.demo(win, app)
+
+def finish(end: A.Win & Eco) -> IO(Unit):
+  (win, state) = end
+  finish.eco(win, parts(state))
+
+def logging(r: Result<&1, &1, U32 & String, String>) -> Bool:
+  match r:
+    case Fail{e}:
+      False{}
+    case Done{v}:
+      String.eq(v, "1")
+
+def reported(got: AS.Service & String) -> IO(AS.Service):
+  (svc, text) = got
+  do IO<AS.Service>:
+    IO.print("accessibility " ++ text)
+    return svc
+
+# The loop also wakes when the accessibility bus has something to read.
+def watching.if(none: Bool, +win: A.Win, fd: U32) -> IO(A.Win):
+  match none:
+    case True{}:
+      IO.pure(A.Win, win)
+    case False{}:
+      A.watch(win, fd)
+
+def watching(+win: A.Win, +fd: U32) -> IO(A.Win):
+  watching.if(U32.is_eq(fd, A.unwatched()), win, fd)
+
+def run(+win: A.Win, demo: Demo, got: AS.Service & U32) -> IO(Unit):
+  (a11y, fd) = got
+  do IO<Unit>:
+    +w : A.Win <- watching(win, fd)
+    end : A.Win & Eco <- Loop.run(~Eco, ~update, ~draw, w, Eco{demo, a11y})
+    finish(end)
 
 def main() -> IO(Unit):
   do IO<Unit>:
@@ -374,5 +633,8 @@ def main() -> IO(Unit):
     +t2 : Nat <- IO.now()
     IO.print(V.describe(Gpu.gpu(r)))
     IO.print("window and GPU ready in " ++ Nat.show(Nat.sub(t2, t1)) ++ " ms")
-    end : A.Win & Demo <- Loop.run(~Demo, ~update, ~draw, win, Demo{r, model, Fr.none(), 0, t0, Clip.none()})
-    finish(end)
+    log : Result<&1, &1, U32 & String, String> <- IO.get_env("AUVIA_LOG")
+    a11y : AS.Service <- AS.start(Acc.tree(model, title(), A.focused(win)), logging(log))
+    a11y : AS.Service <- reported(AS.status(a11y))
+    got : AS.Service & U32 <- AS.descriptor(a11y)
+    run(win, Demo{r, model, Fr.none(), 0, t0, Clip.none()}, got)

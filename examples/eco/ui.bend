@@ -442,6 +442,30 @@ def field_at(m: Model) -> TG.Rect:
   Model{a, c, t, p, k, n, w, h, y} = m
   typing_at(y)
 
+# What assistive technologies read beside the controls (access.bend): the
+# button's and the status line's places, and the field's note.
+def button_at(m: Model) -> TG.Rect:
+  Model{a, c, t, p, k, n, w, h, y} = m
+  places_button(p)
+
+def status_at(m: Model) -> TG.Rect:
+  Model{a, c, t, Places{pa, ta, tb, tc, bt, te, pi, pc, sv, sc}, k, n, w, h, y} = m
+  te
+
+def typing_note_at(y: Typing) -> TG.Rect:
+  match y:
+    case Typing{f, r, n, fa, na}:
+      na
+    case Alias{x}:
+      typing_note_at(x)
+
+def note_at(m: Model) -> TG.Rect:
+  Model{a, c, t, p, k, n, w, h, y} = m
+  typing_note_at(y)
+
+def note_of(m: Model) -> String:
+  note_text(FL.message(field_of(m)))
+
 # The frame
 # ---------
 

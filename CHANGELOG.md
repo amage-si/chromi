@@ -7,8 +7,7 @@ patch version (0.1.1) only fixes. Chromi is built from source together with its
 sibling AMAGE libraries; the set of versions tested together is listed in
 [eco-build's releases](https://github.com/amage-si/eco-build/tree/main/releases).
 
-## Unreleased
-
+## [0.2.0] - 2026-10-09
 ### Changed
 
 - `Gpu.render`: a partial frame with no damage is neither painted nor
@@ -64,4 +63,5 @@ of AMAGE Eco 0.1.0.
   with clipboard, PNG and SVG, accessible through Auvia, idle at zero wakeups.
 - 73 native checks and 27 GPU checks (0 differing pixels).
 
+[0.2.0]: https://github.com/amage-si/chromi/releases/tag/v0.2.0
 [0.1.0]: https://github.com/amage-si/chromi/releases/tag/v0.1.0

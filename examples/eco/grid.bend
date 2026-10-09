@@ -198,7 +198,7 @@ def frame(m: Grid, last: Fr.Frame) -> Fr.Frame:
   Grid{f, cache, +label, counter, cells, k, n, +w, +h} = m
   b = Fr.begin(last, w, h, 1.0, U.background())
   b = Fr.part(b, U.button_id(), s => U.button(M.button(U.button_node(button_rect(label)), k,
-    U.metrics(label), 18.0, M.theme()), s, label))
+    U.metrics(label), 18.0, M.theme()), s, label, button_rect(label)))
   b = Fr.part(b, counter_id(), s => paint_counter(s, label_size(label), counter))
   Fr.end(Fr.stamped(b, cells_id(), 1, s => paint_cells(cells, s)))
 

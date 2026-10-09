@@ -11,6 +11,7 @@ import ../../../Kairo/types.bend as KT
 import ../../../Kairo/main.bend as K
 import ../../../Mokko/main.bend as M
 import ../../../Mokko/field.bend as FL
+import ../../../Mokko/anim.bend as MA
 import ../../../Kairo/edit.bend as KE
 
 # The integrated demo's model, layout and frame, independent of how the
@@ -477,26 +478,43 @@ def at(s: S.Scene, run: T.Run, r: TG.Rect, +color: U32) -> S.Scene:
   TG.Rect{x, y, w, h} = r
   T.paint(s, run, x, y, color)
 
-# Mokko's button primitives, drawn with rounded corners.
-def primitives(ps: +List<M.Primitive>, s: S.Scene, +run: T.Run) -> S.Scene:
+def rx(r: TG.Rect) -> F32:
+  TG.Rect{x, y, w, h} = r
+  x
+
+def ry(r: TG.Rect) -> F32:
+  TG.Rect{x, y, w, h} = r
+  y
+
+# A corner radius `base` at the button's edge `at`, shrunk by how far the
+# shape `r` is inset from it, so inset shapes stay concentric.
+def corner(+at: TG.Rect, r: TG.Rect, +base: F32) -> F32:
+  F32.max(0.0, (base - (rx(r) - rx(at)) : F32))
+
+# Mokko's button primitives, drawn with rounded corners: the fill has
+# radius 10 at the button's edge, the focus ring 9 at its resting 2-unit
+# inset (11 at the edge). Animated insets (the press sink, the ring growing
+# in from 6 units) keep the corners concentric.
+def primitives(ps: +List<M.Primitive>, s: S.Scene, +run: T.Run, +at: TG.Rect) -> S.Scene:
   match ps:
     case Nil{}:
       s
-    case Con{M.Fill{r, color}, rest}:
-      primitives(rest, S.round_rect(s, crect(r), 10.0, color), run)
-    case Con{M.Stroke{r, width, color}, rest}:
-      primitives(rest, S.border(s, crect(r), 9.0, width, color), run)
+    case Con{M.Fill{+r, color}, rest}:
+      primitives(rest, S.round_rect(s, crect(r), corner(at, r, 10.0), color), run, at)
+    case Con{M.Stroke{+r, width, color}, rest}:
+      primitives(rest, S.border(s, crect(r), corner(at, r, 11.0), width, color), run, at)
     case Con{M.TextRun{x, top, baseline, l, size, clip, color}, rest}:
       c = S.clip_rect(s, crect(clip))
       c = T.paint(c, run, x, top, color)
-      primitives(rest, S.reset_clip(c), run)
+      primitives(rest, S.reset_clip(c), run, at)
 
-def button(v: Result<&2, &2, String, M.View>, s: S.Scene, +run: T.Run) -> S.Scene:
+# A Mokko button view, drawn at its bounds `at`.
+def button(v: Result<&2, &2, String, M.View>, s: S.Scene, +run: T.Run, +at: TG.Rect) -> S.Scene:
   match v:
     case Fail{message}:
       S.reject(s, message)
     case Done{M.View{ps, semantic}}:
-      primitives(ps, s, run)
+      primitives(ps, s, run, at)
 
 # Mokko's field primitives, drawn square: the box, the border, the
 # selection band and the caret are plain rectangles; the text run (`run`,
@@ -535,13 +553,66 @@ def note_drawn(y: Typing, s: S.Scene) -> S.Scene:
     case Alias{x}:
       note_drawn(x, s)
 
-def rx(r: TG.Rect) -> F32:
-  TG.Rect{x, y, w, h} = r
-  x
+# Motion
+# ------
 
-def ry(r: TG.Rect) -> F32:
-  TG.Rect{x, y, w, h} = r
-  y
+# The controls' transitions (Mokko's anim.bend, timed by Kinera): the
+# button's hover, press and focus ring, the field's focus ring, error
+# border and caret blink, and the preferences (reduce motion, blink).
+# `Alias` boxes it like Typing: nothing builds one.
+type Motion is Data:
+  Motion{button: MA.ButtonAnim, field: MA.FieldAnim, prefs: MA.Prefs}
+  Boxed{motion: Motion}
+
+# Everything at rest.
+def motion(+prefs: MA.Prefs) -> Motion:
+  Motion{MA.button_anim(), MA.field_anim(), prefs}
+
+# The button heads for Kairo's state `k` at `now` (after each dispatch).
+def pressed(mo: Motion, +k: KT.State, +now: U32) -> Motion:
+  match mo:
+    case Motion{b, fa, +p}:
+      Motion{MA.button_step(b, p, k, button_id(), now), fa, p}
+    case Boxed{x}:
+      pressed(x, k, now)
+
+# Both controls head for Kairo's state `k` and the field `f` at `now`.
+def stepped(mo: Motion, +k: KT.State, +f: FL.Field, +now: U32) -> Motion:
+  match mo:
+    case Motion{b, fa, +p}:
+      Motion{MA.button_step(b, p, k, button_id(), now), MA.field_step(fa, p, k, field_id(), f, now), p}
+    case Boxed{x}:
+      stepped(x, k, f, now)
+
+# When to draw next (`frame_ms` apart while moving, a timer while the
+# caret waits); None once everything rests.
+def next_at(mo: Motion, +now: U32, +frame_ms: U32) -> Maybe<&2, U32>:
+  match mo:
+    case Motion{b, fa, p}:
+      MA.sooner(now, MA.button_deadline(b, now, frame_ms), MA.field_deadline(fa, p, now, frame_ms))
+    case Boxed{x}:
+      next_at(x, now, frame_ms)
+
+def moving_button(mo: Motion, +node: KT.Node, k: KT.State, +run: T.Run, +now: U32) -> Result<&2, &2, String, M.View>:
+  match mo:
+    case Motion{b, fa, p}:
+      MA.button(node, k, metrics(run), 18.0, M.theme(), b, now)
+    case Boxed{x}:
+      moving_button(x, node, k, run, now)
+
+def moving_field(mo: Motion, +node: KT.Node, +k: KT.State, f: FL.Field, +now: U32) -> Result<&2, &2, String, FL.FieldView>:
+  match mo:
+    case Motion{b, fa, p}:
+      MA.field_view(node, k, f, field_px(), FL.field_theme(), placeholder(), fa, p, now)
+    case Boxed{x}:
+      moving_field(x, node, k, f, now)
+
+def field_moved(y: Typing, +k: KT.State, mo: Motion, +now: U32, s: S.Scene) -> S.Scene:
+  match y:
+    case Typing{f, run, note, +fa, na}:
+      field_paint(moving_field(mo, field_node(fa), k, f, now), s, run)
+    case Alias{x}:
+      field_moved(x, k, mo, now, s)
 
 def frame(m: Model) -> S.Scene:
   Model{Assets{f, pic, heart}, cache, Texts{a, b, c, +d, e, pg, sv},
@@ -553,7 +624,7 @@ def frame(m: Model) -> S.Scene:
   s = at(s, a, ta, ink())
   s = at(s, b, tb, muted())
   s = at(s, c, tc, ink())
-  s = button(M.button(button_node(bt), k, metrics(d), 18.0, M.theme()), s, d)
+  s = button(M.button(button_node(bt), k, metrics(d), 18.0, M.theme()), s, d, bt)
   s = at(s, e, te, muted())
   s = field_drawn(y, k, s)
   s = note_drawn(y, s)
@@ -562,25 +633,37 @@ def frame(m: Model) -> S.Scene:
   s = Media.paint_svg(s, heart, rx(svg_at), ry(svg_at))
   at(s, sv, svg_cap, muted())
 
+# A stamp for the parts that depend only on the window's size (the panel,
+# the accent bar, the title, subtitle and body, the media and captions):
+# their places follow the size alone (the body wraps to the column width;
+# the status line, the field and its note come after them in the column).
+def sized(+w: U32, +h: U32) -> U32:
+  (w + h * 65536 : U32)
+
 # The same drawing as retained parts (Chromi's frame.bend), keyed by the
 # layout's child ids (the button and the field by their Kairo ids) and two
-# of their own for the panel and the accent bar. Each part is recorded and compared every
-# frame; only parts that changed are planned and redrawn.
-def framed(m: Model, last: Fr.Frame) -> Fr.Frame:
+# of their own for the panel and the accent bar. Parts stamped with the
+# size are recorded only for a new size; the others (button, status, field,
+# note) are recorded and compared every frame. Only parts that changed are
+# planned and redrawn. The button and
+# the field are drawn with their motion at `now` (the frame's time), so an
+# animated frame changes only their parts, inside their bounds.
+def framed(m: Model, last: Fr.Frame, +mo: Motion, +now: U32) -> Fr.Frame:
   Model{Assets{f, pic, heart}, cache, Texts{a, b, c, +d, e, pg, sv},
     Places{+panel, +ta, tb, tc, +bt, te, +pic_at, pic_cap, +svg_at, svg_cap}, +k, n, +w, +h, +y} = m
+  +z = sized(w, h)
   p = Fr.begin(last, w, h, 1.0, background())
-  p = Fr.part(p, 10, s => S.border(S.round_rect(s, crect(panel), 18.0, panel_color()), crect(panel), 18.0,
+  p = Fr.stamped(p, 10, z, s => S.border(S.round_rect(s, crect(panel), 18.0, panel_color()), crect(panel), 18.0,
     1.0, line_color()))
-  p = Fr.part(p, 11, s => S.fill_rect(s, G.Rect{rx(ta), (ry(ta) - 14.0 : F32), 64.0, 4.0}, accent()))
-  p = Fr.part(p, 1, s => at(s, a, ta, ink()))
-  p = Fr.part(p, 2, s => at(s, b, tb, muted()))
-  p = Fr.part(p, 3, s => at(s, c, tc, ink()))
-  p = Fr.part(p, button_id(), s => button(M.button(button_node(bt), k, metrics(d), 18.0, M.theme()), s, d))
+  p = Fr.stamped(p, 11, z, s => S.fill_rect(s, G.Rect{rx(ta), (ry(ta) - 14.0 : F32), 64.0, 4.0}, accent()))
+  p = Fr.stamped(p, 1, z, s => at(s, a, ta, ink()))
+  p = Fr.stamped(p, 2, z, s => at(s, b, tb, muted()))
+  p = Fr.stamped(p, 3, z, s => at(s, c, tc, ink()))
+  p = Fr.part(p, button_id(), s => button(moving_button(mo, button_node(bt), k, d, now), s, d, bt))
   p = Fr.part(p, 5, s => at(s, e, te, muted()))
-  p = Fr.part(p, field_id(), s => field_drawn(y, k, s))
+  p = Fr.part(p, field_id(), s => field_moved(y, k, mo, now, s))
   p = Fr.part(p, note_id(), s => note_drawn(y, s))
-  p = Fr.part(p, 6, s => Media.paint_picture(s, pic, rx(pic_at), ry(pic_at)))
-  p = Fr.part(p, 7, s => at(s, pg, pic_cap, muted()))
-  p = Fr.part(p, 8, s => Media.paint_svg(s, heart, rx(svg_at), ry(svg_at)))
-  Fr.end(Fr.part(p, 9, s => at(s, sv, svg_cap, muted())))
+  p = Fr.stamped(p, 6, z, s => Media.paint_picture(s, pic, rx(pic_at), ry(pic_at)))
+  p = Fr.stamped(p, 7, z, s => at(s, pg, pic_cap, muted()))
+  p = Fr.stamped(p, 8, z, s => Media.paint_svg(s, heart, rx(svg_at), ry(svg_at)))
+  Fr.end(Fr.stamped(p, 9, z, s => at(s, sv, svg_cap, muted())))

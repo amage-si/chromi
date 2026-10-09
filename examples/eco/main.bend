@@ -13,6 +13,7 @@ import ../../../Kairo/main.bend as K
 import ../../../Kairo/types.bend as KT
 import ../../../Kairo/edit.bend as KE
 import ../../../Mokko/field.bend as FL
+import ../../../Mokko/anim.bend as MA
 import ../../../Tessra/geometry.bend as TG
 import ../../../Voltra/gpu.bend as V
 import ./access.bend as Acc
@@ -34,7 +35,12 @@ import ../../../Auvia/service.bend as AS
 # focus, a click, an edit, a new size, an expose); between changes the
 # program waits for events without a deadline, on the window and on the
 # accessibility bus at once (Ankra's `watch`). An edit redraws only the
-# field and its note. Resize the window: the layout
+# field and its note. The button and the field animate (Mokko's anim.bend:
+# hover and press fades, focus rings, the caret blink): while one moves the
+# loop draws on the monitor's refresh grid (Ankra's `animate`) and each
+# frame redraws only that control; once all rest it waits again with no
+# deadline. ECO_REDUCE_MOTION=1 makes every transition instant and the
+# caret solid. Resize the window: the layout
 # follows. Close it normally. Run from the Chromi directory (the SVG path
 # is relative; the PNG and the font are system files).
 
@@ -51,7 +57,8 @@ def title() -> String:
   "AMAGE Eco - Ankra, Voltra, Chromi"
 
 type Demo is Data:
-  Demo{renderer: Gpu.Renderer, model: U.Model, shown: Fr.Frame, redraws: U32, started: Nat, clip: Clip.Clip}
+  Demo{renderer: Gpu.Renderer, model: U.Model, shown: Fr.Frame, redraws: U32, started: Nat, clip: Clip.Clip,
+    motion: U.Motion}
 
 # The loop's state: the demo and its accessibility service, which owns a
 # socket and so is not Data. `Alias` boxes the pair (nothing builds it), so
@@ -104,8 +111,10 @@ def feed(actions: +List<KT.Action>, +font: F.Font, +at: TG.Rect, e: Edits) -> Ed
       Edits{f, +ed, rs} = e
       feed(rest, font, at, fed(FL.feed(font, U.field_px(), at, U.field_id(), f, a), ed, rs))
 
+# `motion`: the button stepped after each dispatch, at the batch's frame
+# time, so a press and its release in one batch still show the press.
 type Fold is Data:
-  Fold{kairo: KT.State, activations: U32, dirty: Bool, edits: Edits}
+  Fold{kairo: KT.State, activations: U32, dirty: Bool, edits: Edits, motion: U.Motion}
 
 def changed(c: KT.Change) -> Bool:
   KT.Change{s, actions, dirty, layout} = c
@@ -119,15 +128,16 @@ def actions_of(c: KT.Change) -> +List<KT.Action>:
   KT.Change{s, actions, dirty, layout} = c
   actions
 
-def fold(xs: List<&2, KT.Input>, +font: F.Font, +at: TG.Rect, f: Fold) -> Fold:
+def fold(xs: List<&2, KT.Input>, +font: F.Font, +at: TG.Rect, +now: U32, f: Fold) -> Fold:
   match xs:
     case Nil{}:
       f
     case Con{x, rest}:
-      Fold{k, +a, +d, e} = f
+      Fold{k, +a, +d, e, mo} = f
       +c = K.dispatch(k, x)
-      fold(rest, font, at, Fold{K.next(c), (a + activated(c) : U32), d || changed(c),
-        feed(actions_of(c), font, at, e)})
+      +k1 = K.next(c)
+      fold(rest, font, at, now, Fold{k1, (a + activated(c) : U32), d || changed(c),
+        feed(actions_of(c), font, at, e), U.pressed(mo, k1, now)})
 
 # Requests from assistive technologies join the batch after the window's
 # input: a button or focus request goes through Kairo as a click or Tab
@@ -140,23 +150,23 @@ type Verdict is Data:
 type Heard is Data:
   Heard{fold: Fold, verdicts: List<&2, Verdict>}
 
-def routed(got: AK.Routed, +font: F.Font, +at: TG.Rect, +a: U32, +d: Bool, e: Edits) -> Fold & Bool:
+def routed(got: AK.Routed, +font: F.Font, +at: TG.Rect, +a: U32, +d: Bool, e: Edits, mo: U.Motion) -> Fold & Bool:
   AK.Routed{+c, ok} = got
-  (Fold{K.next(c), (a + activated(c) : U32), d || changed(c), feed(actions_of(c), font, at, e)}, ok)
+  (Fold{K.next(c), (a + activated(c) : U32), d || changed(c), feed(actions_of(c), font, at, e), mo}, ok)
 
-def edited(got: AF.Edited, +k: KT.State, +a: U32, +d: Bool, +was: Bool, rs: List<&2, KE.Request>) -> Fold & Bool:
+def edited(got: AF.Edited, +k: KT.State, +a: U32, +d: Bool, +was: Bool, rs: List<&2, KE.Request>, mo: U.Motion) -> Fold & Bool:
   AF.Edited{FL.Fed{f, +dirty, r}, ok} = got
-  (Fold{k, a, d, Edits{f, was || dirty, request.push(r, rs)}}, ok)
+  (Fold{k, a, d, Edits{f, was || dirty, request.push(r, rs)}, mo}, ok)
 
-def hear.of(r: AM.Request, +font: F.Font, +at: TG.Rect, +k: KT.State, +a: U32, +d: Bool, e: Edits) -> Fold & Bool:
+def hear.of(r: AM.Request, +font: F.Font, +at: TG.Rect, +k: KT.State, +a: U32, +d: Bool, e: Edits, mo: U.Motion) -> Fold & Bool:
   match r:
     case AM.EditText{id, op, t}:
       Edits{field, +was, rs} = e
-      edited(AF.edit(font, U.field_px(), at, k, U.field_id(), field, {AM.EditText{id, op, t} : AM.Request}), k, a, d, was, rs)
+      edited(AF.edit(font, U.field_px(), at, k, U.field_id(), field, {AM.EditText{id, op, t} : AM.Request}), k, a, d, was, rs, mo)
     case AM.Activate{id, i}:
-      routed(AK.route(k, {AM.Activate{id, i} : AM.Request}), font, at, a, d, e)
+      routed(AK.route(k, {AM.Activate{id, i} : AM.Request}), font, at, a, d, e, mo)
     case AM.Focus{id}:
-      routed(AK.route(k, {AM.Focus{id} : AM.Request}), font, at, a, d, e)
+      routed(AK.route(k, {AM.Focus{id} : AM.Request}), font, at, a, d, e, mo)
 
 def heard(+r: AM.Request, got: Fold & Bool, vs: List<&2, Verdict>) -> Heard:
   (f, ok) = got
@@ -167,12 +177,17 @@ def hear(rs: List<&2, AM.Request>, +font: F.Font, +at: TG.Rect, h: Heard) -> Hea
     case Nil{}:
       h
     case Con{+r, rest}:
-      Heard{Fold{+k, +a, +d, e}, vs} = h
-      hear(rest, font, at, heard(r, hear.of(r, font, at, k, a, d, e), vs))
+      Heard{Fold{+k, +a, +d, e, mo}, vs} = h
+      hear(rest, font, at, heard(r, hear.of(r, font, at, k, a, d, e, mo), vs))
 
 def heard_fold(h: Heard) -> Fold:
   Heard{f, vs} = h
   f
+
+# Whether the batch changed what the controls show or say.
+def fold_changed(f: Fold) -> Bool:
+  Fold{k, +a, d, Edits{field, edited, rs}, mo} = f
+  d || edited || U32.is_gt(a, 0)
 
 def heard_verdicts(h: Heard) -> List<&2, Verdict>:
   Heard{f, vs} = h
@@ -326,6 +341,43 @@ def logged(+es: List<&2, A.Input>, +at: Nat, +activations: U32, tail: String) ->
 def decide(+app: Demo, +redraw: Bool) -> Loop.Step<Demo>:
   Bool.pick(Loop.Step<Demo>, redraw, Loop.Redraw{app}, Loop.Keep{app})
 
+# Motion
+# ------
+
+# One frame in ms at the window's monitor refresh (mHz); 60 Hz unknown.
+def frame_ms.of(unknown: Bool, +mhz: U32) -> U32:
+  match unknown:
+    case True{}:
+      16
+    case False{}:
+      (1000000 / mhz : U32)
+
+def frame_ms(+win: A.Win) -> U32:
+  +mhz = A.refresh(win)
+  frame_ms.of(U32.is_eq(mhz, 0), mhz)
+
+# A deadline `wait` ms away is due by the next frame (or already past).
+def soon(+wait: U32, +fm: U32) -> Bool:
+  U32.is_le(wait, fm) || U32.is_ge(wait, 2147483648)
+
+def answer.at(+app: Demo, +redraw: Bool, due: Bool, +wait: U32) -> Loop.Step<Demo>:
+  match due:
+    case True{}:
+      Loop.animate(Demo, app)
+    case False{}:
+      Bool.pick(Loop.Step<Demo>, redraw, Loop.Redraw{app}, Loop.Sleep{app, wait})
+
+# The loop's answer from the motion's next deadline at `now`: animate while
+# a control moves (a frame per refresh), a timer while the caret waits
+# between fades (or a redraw, whose draw sets the timer again), and as
+# before (Redraw or Keep: no deadline) once everything rests.
+def answer(+app: Demo, +redraw: Bool, next: Maybe<&2, U32>, +now: U32, +fm: U32) -> Loop.Step<Demo>:
+  match next:
+    case None{}:
+      decide(app, redraw)
+    case Some{+t}:
+      answer.at(app, redraw, soon((t - now : U32), fm), (t - now : U32))
+
 def refielded(edited: Bool, +m: U.Model, +f: FL.Field) -> IO(U.Model):
   match edited:
     case False{}:
@@ -333,51 +385,55 @@ def refielded(edited: Bool, +m: U.Model, +f: FL.Field) -> IO(U.Model):
     case True{}:
       relaid(U.refield(m, f))
 
-def update.served(+win: A.Win, +es: List<&2, A.Input>, app: Demo, +a: U32, +d: Bool, +now: Nat, s: Served) -> IO(Loop.Step<Demo>):
-  Demo{+r, +m, shown, n, +t, old} = app
+# The controls' motion heads for the batch's outcome at the frame time.
+def update.served(+win: A.Win, +es: List<&2, A.Input>, app: Demo, +a: U32, +d: Bool, +now: Nat, s: Served, mo: U.Motion) -> IO(Loop.Step<Demo>):
+  Demo{+r, +m, shown, n, +t, old, was} = app
   Served{clip, +k, Edits{+field, +edited, rs}} = s
   +w = A.width(win)
   +h = A.height(win)
   +sized = other_size(m, w, h)
   +again = sized || U32.is_gt(a, 0)
+  +ft = A.frame_time(win)
+  +mo1 = U.stepped(mo, k, field, ft)
   do IO<Loop.Step<Demo>>:
     logged(es, Nat.sub(now, t), a, field_word(edited, field))
     +r1 : Gpu.Renderer <- resized(sized, r, w, h)
     +m1 : U.Model <- refielded(edited, U.with_kairo(m, k), field)
     +m2 : U.Model <- remodel(again, m1, w, h, (U.clicks(m) + a : U32))
-    return decide(Demo{r1, m2, shown, n, t, clip}, d || edited || again || A.exposed(es) || Gpu.pending(r1))
+    return answer(Demo{r1, m2, shown, n, t, clip, mo1}, d || edited || again || A.exposed(es) || Gpu.pending(r1),
+      U.next_at(mo1, ft, frame_ms(win)), ft, frame_ms(win))
 
 # Kairo's actions reach the field; the clipboard answers other clients
 # (serve) and the field's requests (copy, paste).
 # Small views of the app. The Demo is wide (the model is flattened into
 # it), so no def holds the Demo and its model at once.
 def model_of(a: Demo) -> U.Model:
-  Demo{r, m, s, n, t, c} = a
+  Demo{r, m, s, n, t, c, mo} = a
   m
 
 def clip_of(a: Demo) -> Clip.Clip:
-  Demo{r, m, s, n, t, c} = a
+  Demo{r, m, s, n, t, c, mo} = a
   c
 
 def font_of(a: Demo) -> F.Font:
-  Demo{r, m, s, n, t, c} = a
+  Demo{r, m, s, n, t, c, mo} = a
   U.font_of(m)
 
 def field_at(a: Demo) -> TG.Rect:
-  Demo{r, m, s, n, t, c} = a
+  Demo{r, m, s, n, t, c, mo} = a
   U.field_at(m)
 
 def started_fold(a: Demo) -> Fold:
-  Demo{r, +m, s, n, t, c} = a
-  Fold{U.kairo(m), 0, False{}, Edits{U.field_of(m), False{}, Nil{}}}
+  Demo{r, +m, s, n, t, c, mo} = a
+  Fold{U.kairo(m), 0, False{}, Edits{U.field_of(m), False{}, Nil{}}, mo}
 
 def update.folded(+win: A.Win, +es: List<&2, A.Input>, +app: Demo, +now: Nat, f: Fold) -> IO(Loop.Step<Demo>):
-  Fold{k, +a, +d, Edits{field, edited, rs}} = f
+  Fold{k, +a, +d, Edits{field, edited, rs}, mo} = f
   do IO<Loop.Step<Demo>>:
     +c1 : Clip.Clip <- Clip.serve(win, clip_of(app), es)
     +s : Served <- requested(List.reverse(&2, KE.Request, rs), win, font_of(app), field_at(app),
       Served{c1, k, Edits{field, edited, Nil{}}})
-    update.served(win, es, app, a, d, now, s)
+    update.served(win, es, app, a, d, now, s, mo)
 
 # Accessibility
 # -------------
@@ -456,8 +512,9 @@ def said(vs: List<&2, Verdict>) -> IO(Unit):
         said(rest)
 
 # The tree goes out after anything that may have changed what it says: a
-# redraw, a request, a change of window focus. An unchanged tree sends
-# nothing.
+# redraw, a request, a change of window focus, a Kairo change or an edit
+# (which may start an animation instead of a redraw). Animated frames alone
+# do not publish. An unchanged tree sends nothing.
 def told(publish: Bool, +win: A.Win, d: Demo, svc: AS.Service) -> IO(AS.Service):
   match publish:
     case False{}:
@@ -486,11 +543,13 @@ def announced(+win: A.Win, step: Loop.Step<Demo>, svc: AS.Service, +asked: Bool)
 
 def attended(+win: A.Win, +es: List<&2, A.Input>, +app: Demo, +now: Nat, inputs: List<&2, KT.Input>,
   svc: AS.Service, +rs: List<&2, AM.Request>) -> IO(Loop.Step<Eco>):
-  +h = hear(rs, font_of(app), field_at(app), Heard{fold(inputs, font_of(app), field_at(app), started_fold(app)), Nil{}})
+  +h = hear(rs, font_of(app), field_at(app), Heard{fold(inputs, font_of(app), field_at(app), A.frame_time(win),
+    started_fold(app)), Nil{}})
   do IO<Loop.Step<Eco>>:
     said(heard_verdicts(h))
     step : Loop.Step<Demo> <- update.folded(win, es, app, now, heard_fold(h))
-    announced(win, step, settle_all(heard_verdicts(h), svc), Bool.not(List.is_empty(&2, AM.Request, rs)) || focus_changed(es))
+    announced(win, step, settle_all(heard_verdicts(h), svc), Bool.not(List.is_empty(&2, AM.Request, rs)) ||
+      focus_changed(es) || fold_changed(heard_fold(h)))
 
 def pumped(+win: A.Win, +es: List<&2, A.Input>, +app: Demo, +now: Nat, inputs: List<&2, KT.Input>,
   got: AS.Service & List<&2, AM.Request>) -> IO(Loop.Step<Eco>):
@@ -523,23 +582,27 @@ def report(+n: U32, +ms: Nat, +r: Gpu.Renderer, +m: U.Model, +since: Nat, +damag
     U32.show(Gpu.last_quads(r)) ++ " quads, " ++ U32.show(U.glyphs(m)) ++ " glyphs cached, atlas " ++
     U32.show(Gpu.entries(r)) ++ " entries, " ++ U32.show(Gpu.uploaded(r)) ++ " texels uploaded")
 
-def drawn(got: Gpu.Renderer & Fr.Frame, +m: U.Model, +n: U32, +t: Nat, +t0: Nat, +damage: U32, clip: Clip.Clip) -> IO(Loop.Step<Demo>):
+def drawn(+win: A.Win, got: Gpu.Renderer & Fr.Frame, +m: U.Model, +n: U32, +t: Nat, +t0: Nat, +damage: U32, clip: Clip.Clip,
+  +mo: U.Motion, +now: U32) -> IO(Loop.Step<Demo>):
   (+r1, shown) = got
   do IO<Loop.Step<Demo>>:
     +t1 : Nat <- IO.now()
     report((n + 1 : U32), Nat.sub(t1, t0), r1, m, Nat.sub(t1, t), damage)
-    return decide(Demo{r1, m, shown, (n + 1 : U32), t, clip}, Gpu.pending(r1))
+    return answer(Demo{r1, m, shown, (n + 1 : U32), t, clip, mo}, Gpu.pending(r1), U.next_at(mo, now, frame_ms(win)), now,
+      frame_ms(win))
 
 # The frame is retained (Chromi's frame.bend): only what changed since the
 # last one is planned and redrawn. The report gives the damaged area in
-# pixels (the regions a partial frame redraws).
-def draw.demo(win: A.Win, app: Demo) -> IO(Loop.Step<Demo>):
-  Demo{+r, +m, last, +n, +t, clip} = app
+# pixels (the regions a partial frame redraws). The controls are drawn at
+# the frame's time (Ankra's frame_time: the refresh grid while animating).
+def draw.demo(+win: A.Win, app: Demo) -> IO(Loop.Step<Demo>):
+  Demo{+r, +m, last, +n, +t, clip, +mo} = app
+  +now = A.frame_time(win)
   do IO<Loop.Step<Demo>>:
     +t0 : Nat <- IO.now()
-    +f : Fr.Frame <- IO.pure(Fr.Frame, U.framed(m, last))
+    +f : Fr.Frame <- IO.pure(Fr.Frame, U.framed(m, last, mo, now))
     got : Gpu.Renderer & Fr.Frame <- Gpu.render(r, f)
-    drawn(got, m, n, t, t0, Fr.area(Fr.regions(f), 0), clip)
+    drawn(win, got, m, n, t, t0, Fr.area(Fr.regions(f), 0), clip, mo, now)
 
 def rewrap(step: Loop.Step<Demo>, svc: AS.Service) -> Loop.Step<Eco>:
   match step:
@@ -565,7 +628,7 @@ def draw(win: A.Win, state: Eco) -> IO(Loop.Step<Eco>):
 # --------------------
 
 def finish.demo(win: A.Win, app: Demo) -> IO(Unit):
-  Demo{+r, +m, s, +n, t, c} = app
+  Demo{+r, +m, s, +n, t, c, mo} = app
   do IO<Unit>:
     IO.print("frames presented: " ++ U32.show(V.drawn(Gpu.gpu(r))) ++ ", redraws: " ++ U32.show(n) ++
       ", clicks: " ++ U32.show(U.clicks(m)))
@@ -586,6 +649,7 @@ def finish(end: A.Win & Eco) -> IO(Unit):
   (win, state) = end
   finish.eco(win, parts(state))
 
+# An environment variable set to "1".
 def logging(r: Result<&1, &1, U32 & String, String>) -> Bool:
   match r:
     case Fail{e}:
@@ -637,4 +701,7 @@ def main() -> IO(Unit):
     a11y : AS.Service <- AS.start(Acc.tree(model, title(), A.focused(win)), logging(log))
     a11y : AS.Service <- reported(AS.status(a11y))
     got : AS.Service & U32 <- AS.descriptor(a11y)
-    run(win, Demo{r, model, Fr.none(), 0, t0, Clip.none()}, got)
+    reduce : Result<&1, &1, U32 & String, String> <- IO.get_env("ECO_REDUCE_MOTION")
+    +reduced : Bool <- IO.pure(Bool, logging(reduce))
+    IO.print("motion: " ++ Bool.pick(String, reduced, "reduced (ECO_REDUCE_MOTION=1)", "on"))
+    run(win, Demo{r, model, Fr.none(), 0, t0, Clip.none(), U.motion(MA.Prefs{reduced, True{}})}, got)

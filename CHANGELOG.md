@@ -19,6 +19,22 @@ sibling AMAGE libraries; the set of versions tested together is listed in
   `oklab_to_linear`) and OKLCH (`oklch`, `oklch_to_oklab`). Composition is
   unchanged (encoded sRGB).
 - 9 native checks for it (82 in all) and `tests/mix_bench.bend`.
+- The eco demo animates: the button and the text field are drawn with
+  Mokko's `anim.bend` (hover and press fades, focus rings, error border,
+  caret blink) at Ankra's frame time, and the loop answers `animate` while
+  something moves, a timer between caret fades, and no deadline at rest.
+  Each animated frame redraws only the moving control's part.
+  `ECO_REDUCE_MOTION=1` turns the motion off.
+
+### Changed
+
+- The eco demo's button painter keeps its rounded corners concentric for
+  inset shapes (the press sink, the focus ring growing in); at rest the
+  frame is unchanged (the reference frames are byte-identical).
+- The eco demo's static parts (panel, accent bar, title, subtitle, body,
+  media and captions) are stamped with the window size, so a frame records
+  only the button, status line, field and note: ~0.15 ms less main-thread
+  CPU per animated frame.
 
 ## [0.1.0] - 2026-10-09
 

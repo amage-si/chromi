@@ -98,7 +98,9 @@ How it was verified:
   a held Backspace repeated; Shift+Home selected; Ctrl+C then `wl-paste`
   printed the text; `wl-copy café` then Ctrl+V inserted it (the paste asked
   the owner and the answer arrived in a later batch); "€" was refused whole
-  with the error border and "Character U+20AC cannot be displayed"; a click
+  with the error border and "Character U+20AC cannot be displayed" (that run
+  predates Syllo accepting the symbols the font has: € is typed now, and a
+  scalar the font lacks, such as U+2615, is what gets refused); a click
   placed the caret and a drag selected; Space in the field typed a space and
   never activated the button, while Space on the button still did. Each
   keystroke was a partial frame of 15,840 pixels (the field's 360x44 box),
@@ -106,6 +108,24 @@ How it was verified:
   0.77 ms median (p90 0.94, 17 keys). Unfocused idle: 0 frames and 0
   main-thread wakeups in 5 s. The first frame equals the CPU reference at
   900x560 (0 differing pixels).
+- **Accessible demo** (Auvia, `examples/eco/access.bend`): the demo joins the
+  AT-SPI desktop as `amage-eco` with its frame, the button, the status line
+  and the field's note (polite live regions) and the text field (an entry
+  with `Text` and `EditableText`). Requests from assistive technologies join
+  the batch's fold, so a `DoAction` counts as a click and an `InsertText`
+  goes through the field like typing. Auvia's libatspi probe passed 27 of 27
+  checks on the real window: `SetTextContents`, `InsertText`, `DeleteText`
+  (answered in about 5 ms), and a refused U+2615 that returns false and
+  changes nothing. Under Orca 50.2, with input sent only to the window, Orca
+  spoke the window title, `'Ativar'` `'button.'` on Tab, `'Ativado 1 vez.'`
+  on Space, `'Texto livre'` `'entry'` and the placeholder on Tab, the
+  refusal message, and the selection. Orca's echo of real typing is not
+  verified yet. The loop waits on the window and the bus socket at once
+  (Ankra's `watch`): idle for 10 s, 0 frames and 0 main-thread wakeups, the
+  same as before Auvia. Window-only input (XSendEvent) typed "Olá, ação!"
+  with dead keys; Backspace, Shift+Home, Ctrl+C (the demo took the
+  clipboard), a paste of its own text and Enter on the button all
+  worked.
 - The shape example (`examples/shapes.bend`, official window) still builds;
   `tests/ankra.bend` passes its 2 companion checks.
 - **7 text cache checks** (`examples/eco/text_tests.bend`): the demo's text

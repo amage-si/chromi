@@ -2,7 +2,7 @@
 
 | Path | What it shows |
 | --- | --- |
-| [eco/main.bend](eco/main.bend) | The integrated demo, GPU-presented: Ankra's native window and events, Kairo state, Tessra layout (side by side when wide, stacked when narrow), Runika/Syllo/Dithra text, a Mokko button, a Mokko text field (Kairo editing, Ankra text input and CLIPBOARD; text the font cannot show is refused with a message), a PNG decoded by Ocula, an SVG parsed by Splina; Chromi keeps each frame as retained parts (`frame.bend`) and Voltra redraws only what changed, on its canvas. Redraws only when something visible changed; a click lays out only the status line again, a keystroke redraws only the field (and its note when the message changes). |
+| [eco/main.bend](eco/main.bend) | The integrated demo, GPU-presented: Ankra's native window and events, Kairo state, Tessra layout (side by side when wide, stacked when narrow), Runika/Syllo/Dithra text, a Mokko button, a Mokko text field (Kairo editing, Ankra text input and CLIPBOARD; text the font cannot show is refused with a message), a PNG decoded by Ocula, an SVG parsed by Splina; Chromi keeps each frame as retained parts (`frame.bend`) and Voltra redraws only what changed, on its canvas. Redraws only when something visible changed; a click lays out only the status line again, a keystroke redraws only the field (and its note when the message changes). Accessible through Auvia ([eco/access.bend](eco/access.bend)): screen readers see the button, the status line, the text field and its note, and their requests go through Kairo and the field like user input; the loop wakes for the window or the accessibility bus, never on a timer. `AUVIA_LOG=1` prints every AT-SPI call and event. |
 | [eco/cpu.bend](eco/cpu.bend) | The same scene on the previous path: CPU raster of the draw list, official window, `XPutImage`, fixed 900x560. For comparison. |
 | [eco/reference.bend](eco/reference.bend) | Writes the demo's first frame painted by the CPU reference, at any size (`reference W H`), as `build/eco-reference-WxH.ppm`. |
 | [eco/bench_gpu.bend](eco/bench_gpu.bend), [eco/bench_cpu.bend](eco/bench_cpu.bend) | The scene redrawn N times on each path; see [docs/bench.md](../docs/bench.md). |
@@ -27,7 +27,11 @@ bend examples/eco/main.bend -o build/eco     # one compilation unit: about 85 s,
 The demo prints one line per input batch and per redraw. Resize the window
 (the layout follows), click the button or use Tab with Space or Enter, Tab to
 the text field and type, copy and paste, then close it normally: it reports the frames presented and `teardown: 0 native
-objects left`.
+objects left`. With an AT-SPI bus (`at-spi2-core`) the demo registers as
+`amage-eco`; run Orca, or Auvia's `tools/atspi_probe.py --app amage-eco
+--button Ativar --label-prefix "Clique no botão|Ativado" --field "Texto livre"
+--field-seed olá --out probe.json`, against it. Without a bus it runs the
+same, offline.
 
 `shapes.bend` and `tests/ankra.bend` use only Ankra's official-runtime
 backend (`main.bend`):

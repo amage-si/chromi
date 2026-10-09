@@ -57,6 +57,60 @@ partial native upload guarantee is made.
 because Bend modules have no public/private export boundary here. Applications
 should use `main.bend` and `G.Rect` rather than depend on tree internals.
 
+## Colour interpolation (`mix.bend`)
+
+For animations and gradients: a colour between two others, computed every
+frame. Colours are `0xRRGGBBAA`, sRGB-encoded, straight alpha, as everywhere
+in Chromi. This does not change composition, which stays in encoded sRGB.
+
+| Function | Contract |
+| --- | --- |
+| `M.mix_oklab(a, b, t)` | `U32`: `a` to `b` at `t` in OKLab. The perceptual choice: even lightness steps, hue kept (blue to yellow passes through a light blue-green, not grey). |
+| `M.mix_linear(a, b, t)` | The same in linear-light sRGB (physical light: what a blur or a cross-fade of light does). |
+| `M.mix_srgb(a, b, t)` | The same in encoded sRGB bytes, as a plain lerp; for comparison and for matching other tools. |
+| `M.to_linear(v)`, `M.to_srgb(v)` | The exact sRGB transfer function (IEC 61966-2-1) on `F32` 0..1: `v / 12.92` up to 0.04045, else `((v + 0.055) / 1.055)^2.4`; back: `12.92 v` up to 0.0031308, else `1.055 v^(1/2.4) - 0.055`, clamped to 0..1 (NaN gives 0). |
+| `M.byte_to_linear(c)`, `M.linear_to_byte(v)` | A channel byte to linear light; linear light to a byte, clamped and rounded to nearest. |
+| `M.rgb(c)`, `M.rgba(v, alpha)` | `0xRRGGBBAA` to `M.Rgb{r, g, b}` in linear light, and back with an alpha byte. |
+| `M.oklab(v)`, `M.oklab_to_linear(lab)` | Linear sRGB to `M.Lab{l, a, b}` and back with Björn Ottosson's matrices; back may leave 0..1 outside the gamut. |
+| `M.of_rgba(c)`, `M.to_rgba(lab, alpha)` | `0xRRGGBBAA` to OKLab (alpha dropped) and back (clamped to the gamut per channel, rounded). |
+| `M.oklch(lab)`, `M.oklch_to_oklab(lch)` | `M.Lch{l, c, h}`: chroma `hypot(a, b)`, hue `atan2(b, a)` in radians. |
+
+Rules of the three mixes:
+
+- **Ends.** `t <= 0` (and NaN) answers `a` exactly and `t >= 1` answers `b`
+  exactly, without conversion: an animation lands on its colour. `t` is
+  clamped, so a spring's overshoot does not extrapolate colours.
+- **Alpha** is interpolated linearly, `round(aa + (ab - aa) t)`.
+- **Colour is premultiplied**, as CSS Color 4 interpolates: each end counts in
+  proportion to its alpha, in the interpolation space. Straight
+  interpolation would fade red to transparent black through dark,
+  half-visible reds (a dark fringe); premultiplied, a transparent end lends no
+  colour and red stays red while it fades (`mix(0xff0000ff, 0x00000000, 0.5)`
+  is `0xff000080`). The colour weight of `b` is `t ab / ((1 - t) aa + t ab)`,
+  which is `t` when the alphas are equal (also both 0), so opaque colours mix
+  as a plain lerp.
+- **Rounding.** OKLab and linear results are clamped per channel to the gamut
+  and rounded to the nearest byte; sRGB mixes round the interpolated byte.
+
+Blue (`0x0000ffff`) to yellow (`0xffff00ff`) at 0.5:
+
+| Space | Result |
+| --- | --- |
+| OKLab | `0x6cabc7ff` (light blue-green) |
+| linear light | `0xbcbcbcff` (light grey) |
+| sRGB | `0x808080ff` (the muddy grey) |
+
+**Accuracy** (all in `F32`; cube roots and powers are `F32.pow`):
+sRGB -> OKLab -> sRGB gives every one of the 16,777,216 opaque colours back
+exactly (`tests/mix_bench.bend`; `tests.bend` checks every 61st and every
+grey). Against an independent float64 reference, 100,000 random mixes per
+space were within 1 of every channel (0.2% off by 1, ties of rounding); the
+40 mixes kept in `tests.bend` are exact.
+
+**Cost** per call on Ian's machine (Bend 2.0.36, `-O3`, one core): about 0.26
+to 0.4 µs for `mix_oklab` (15 `pow`), 0.13 to 0.2 µs for `mix_linear` and 0.02
+µs for `mix_srgb`. An animated colour is one call per frame.
+
 ## Draw lists (`scene.bend`)
 
 A `Scene` records the same validated calls as the canvas, resolved to

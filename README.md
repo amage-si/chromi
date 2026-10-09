@@ -32,6 +32,12 @@ pixels.
   samples per pixel on 1/8-pixel geometry, by integer rules shared with
   Voltra's shader.
 - Straight RGBA8 source-over composition on an opaque surface.
+- **Colour interpolation for animations and gradients** (`mix.bend`):
+  `mix_oklab`, `mix_linear` and `mix_srgb` mix two `0xRRGGBBAA` colours at
+  `t`, premultiplied as CSS Color 4 does, with exact ends; plus the sRGB
+  transfer function and OKLab/OKLCH conversions. Blue to yellow at 0.5 is
+  `0x6cabc7ff` in OKLab, `0xbcbcbcff` in linear light and the grey
+  `0x808080ff` in sRGB. About 0.3 µs per OKLab mix. Composition is unchanged.
 - Row-major RGBA bitmaps and 8-bit coverage masks, with exact-length
   validation, either per call or once (`S.rgba`, `S.coverage`) for pixels drawn
   in every frame.
@@ -57,7 +63,7 @@ pixels.
 
 How it was verified:
 
-- **73 native checks** (`tests.bend`, no display): geometry, clipping, color,
+- **82 native checks** (`tests.bend`, no display): geometry, clipping, color,
   masks, invalid input, the final RGB conversion, the draw list (replaying a
   scene equals drawing the same calls on the canvas, operation recording,
   rounded-box quantization, coverage rules, validated pixels), culling, and
@@ -65,7 +71,10 @@ How it was verified:
   unchanged frame damages nothing; stamped parts; joined regions; and
   repainting only the damage equals painting the frame whole for hover, focus,
   a translucent part moved over others, parts removed and added, parts
-  reordered and a new size, with a control that differs.
+  reordered and a new size, with a control that differs. Colour mixing:
+  sRGB -> OKLab -> sRGB exact on 275,293 colours (and on all 16,777,216 in
+  `tests/mix_bench.bend`), 40 mixes per space equal to a float64 reference,
+  exact ends, symmetry, premultiplied alpha, blue and yellow.
 - **27 GPU checks** (`gpu_tests.bend`, offscreen through Voltra, no display):
   four scenes (fills, borders, clips, translucency, fractional and negative
   edges; rounded boxes and borders; masks and bitmaps through the atlas,
@@ -277,11 +286,13 @@ drawing.
 | [gpu.bend](gpu.bend) | GPU renderer of draw lists and retained frames through Voltra (quads, atlas, partial redraws). |
 | [geometry.bend](geometry.bend) | Bounds, coordinate conversion, and clip intersections. |
 | [color.bend](color.bend) | RGBA channels, source-over blending, and coverage. |
+| [mix.bend](mix.bend) | Colour interpolation in OKLab, linear light and sRGB; sRGB transfer, OKLab and OKLCH. |
 | [tree.bend](tree.bend) | Quadtree painting, compaction, sampling, and Base image output. |
 | [tests.bend](tests.bend) | Native renderer checks (no display, no GPU). |
 | [gpu_tests.bend](gpu_tests.bend) | GPU against CPU, pixel by pixel (GPU, no display). |
 | [examples/](examples/) | The integrated demo and its CPU variant, benchmarks, the shape scene; `eco/text.bend` and `eco/text_tests.bend` are the demo's cached text. |
 | [tests/ankra.bend](tests/ankra.bend) | Two companion checks for the official-window example. |
+| [tests/mix_bench.bend](tests/mix_bench.bend) | The full OKLab round trip and the cost of one colour mix. |
 | [docs/](docs/) | API and benchmark references. |
 
 ## Direction

@@ -5,6 +5,7 @@ import ./color.bend as Color
 import ./scene.bend as S
 import ./replay.bend as R
 import ./frame.bend as F
+import ./mix.bend as M
 
 def check(ok: Bool, name: String) -> IO(Unit):
   match ok:
@@ -322,6 +323,155 @@ def stamped.frame(+stamp: U32, +color: U32, last: F.Frame) -> F.Frame:
 def blank8() -> S.Scene:
   S.new(8, 8, 1.0, 255)
 
+# Colour interpolation (mix.bend)
+# --------------------------------
+
+type Space is Data:
+  InOklab{}
+  InLinear{}
+  InSrgb{}
+
+def mix_in(space: Space, +a: U32, +b: U32, +t: F32) -> U32:
+  match space:
+    case InOklab{}:
+      M.mix_oklab(a, b, t)
+    case InLinear{}:
+      M.mix_linear(a, b, t)
+    case InSrgb{}:
+      M.mix_srgb(a, b, t)
+
+def diff(+x: U32, +y: U32) -> U32:
+  (U32.max(x, y) - U32.min(x, y) : U32)
+
+# The largest difference of one channel (alpha included) between two colours.
+def channel_error(+c: U32, +d: U32) -> U32:
+  U32.max(U32.max(diff(Color.red(c), Color.red(d)), diff(Color.green(c), Color.green(d))),
+    U32.max(diff(Color.blue(c), Color.blue(d)), diff(Color.alpha(c), Color.alpha(d))))
+
+# A pair, t, and the mixes in OKLab, linear light and sRGB computed by an
+# independent float64 reference (Python, CSS Color 4 premultiplied rules).
+type MixCase is Data:
+  MixCase{a: U32, b: U32, t: F32, oklab: U32, linear: U32, srgb: U32}
+
+def mix_cases() -> List<&2, MixCase>:
+  [MixCase{255, 4278190335, 0.397, 1191182591, 2835349759, 1694499071},
+  MixCase{65535, 4294902015, 0.815, 3370288383, 3924391935, 3503304703},
+  MixCase{4294902015, 255, 0.581, 1296892159, 2913796351, 1802174719},
+  MixCase{862375040, 16711808, 0.047, 812632448, 846514304, 829276800},
+  MixCase{4278190080, 4278190080, 0.078, 4278190080, 4278190080, 4278190080},
+  MixCase{4294902015, 862375040, 0.426, 3285811657, 3756224969, 3369416649},
+  MixCase{4294902015, 16711935, 0.628, 2566848767, 2768175359, 1610547455},
+  MixCase{65535, 4278190080, 0.059, 65520, 65520, 65520},
+  MixCase{949539216, 200071088, 0.556, 684447394, 617665954, 499897762},
+  MixCase{571981485, 1243862445, 0.421, 874367149, 924698797, 857524397},
+  MixCase{2322228204, 505913792, 0.569, 1330743507, 1699776723, 1380418515},
+  MixCase{2406286680, 3505236015, 0.678, 3014616380, 3049225788, 2981190460},
+  MixCase{442620898, 2497953762, 0.57, 1538249186, 1958399202, 1621871586},
+  MixCase{806899909, 1599435267, 0.105, 806899889, 806899889, 806899889},
+  MixCase{3058492450, 269676599, 0.563, 1345842478, 1848568878, 1176890414},
+  MixCase{2658625969, 884585905, 0.496, 2123993009, 2023527857, 1771605937},
+  MixCase{2283721058, 1836494974, 0.772, 1953216376, 1936504696, 1919334008},
+  MixCase{1999744784, 2514969041, 0.915, 2514903745, 2514903745, 2514903745},
+  MixCase{1552984408, 1287489368, 0.253, 1503437400, 1486725464, 1486594136},
+  MixCase{772092314, 3002158228, 0.774, 2494976917, 2681620373, 2478458517},
+  MixCase{351564607, 2467131055, 0.304, 2458351713, 1890349153, 1517645921},
+  MixCase{2126508550, 3758686726, 0.347, 3029838598, 2845755398, 2692783878},
+  MixCase{1927728186, 1236683272, 0.607, 1792980764, 1826602268, 1809757468},
+  MixCase{314395342, 507088656, 0.512, 229922413, 330781293, 330518381},
+  MixCase{708506836, 3251895508, 0.345, 1417345748, 2072704980, 1584396244},
+  MixCase{4008365026, 2100080514, 0.423, 3417688249, 3586769849, 3434267577},
+  MixCase{4131840500, 2869965264, 0.086, 4031042801, 4047821553, 4030911729},
+  MixCase{2396917114, 2461127546, 0.783, 2428352890, 2445065594, 2444994682},
+  MixCase{3514800842, 1347535308, 0.343, 2759043787, 2993859019, 2758780875},
+  MixCase{1504004731, 2552799181, 0.497, 2338686884, 2238613412, 2153217956},
+  MixCase{3422624989, 1959387101, 0.077, 3392025053, 3342617053, 3306171357},
+  MixCase{401991735, 4057374422, 0.275, 3169173091, 3236151395, 2581838947},
+  MixCase{2993772869, 2852512026, 0.074, 2993708610, 2993643842, 2993577282},
+  MixCase{3140305423, 3012885263, 0.313, 3159850255, 3109985551, 3092085775},
+  MixCase{2482260147, 4265314571, 0.678, 2883868481, 2766689089, 2682212161},
+  MixCase{1914012528, 1222328495, 0.712, 1706516893, 1405506461, 1370640029},
+  MixCase{3809809032, 2871841672, 0.35, 3459542152, 3525280904, 3474806408},
+  MixCase{4040054837, 1982966162, 0.358, 2708970326, 3012333654, 2792327510},
+  MixCase{2623879480, 502922616, 0.494, 2076884312, 1624758104, 1187626584},
+  MixCase{937195259, 3299535611, 0.292, 1993383419, 2026873851, 1624086779}]
+
+def wanted(space: Space, +oklab: U32, +linear: U32, +srgb: U32) -> U32:
+  match space:
+    case InOklab{}:
+      oklab
+    case InLinear{}:
+      linear
+    case InSrgb{}:
+      srgb
+
+# The worst channel error against the reference.
+def reference.worst(+space: Space, xs: List<&2, MixCase>, +acc: U32) -> U32:
+  match xs:
+    case Nil{}:
+      acc
+    case Con{MixCase{a, b, t, o, l, s}, rest}:
+      reference.worst(space, rest, U32.max(acc, channel_error(mix_in(space, a, b, t), wanted(space, o, l, s))))
+
+# Exact ends at t = 0 and 1, and t clamped outside (NaN counts as 0).
+def ends_exact(+space: Space, +a: U32, +b: U32) -> Bool:
+  U32.is_eq(mix_in(space, a, b, 0.0), a) && U32.is_eq(mix_in(space, a, b, 1.0), b) &&
+    U32.is_eq(mix_in(space, a, b, F32.neg(0.5)), a) && U32.is_eq(mix_in(space, a, b, 2.0), b) &&
+    U32.is_eq(mix_in(space, a, b, (0.0 / 0.0 : F32)), a)
+
+def endpoints(+space: Space, xs: List<&2, MixCase>) -> Bool:
+  match xs:
+    case Nil{}:
+      True{}
+    case Con{MixCase{a, b, t, o, l, s}, rest}:
+      ends_exact(space, a, b) && endpoints(space, rest)
+
+# mix(a, b, t) and mix(b, a, 1 - t): the worst channel difference.
+def symmetry.worst(+space: Space, xs: List<&2, MixCase>, +acc: U32) -> U32:
+  match xs:
+    case Nil{}:
+      acc
+    case Con{MixCase{+a, +b, +t, o, l, s}, rest}:
+      symmetry.worst(space, rest, U32.max(acc, channel_error(mix_in(space, a, b, t), mix_in(space, b, a, (1.0 - t : F32)))))
+
+# sRGB -> OKLab -> sRGB on every 61st opaque colour of the 2^24 (all the
+# greys separately): the worst channel error.
+def round_trip.worst(n: Nat, +c: U32, +step: U32, +acc: U32) -> U32:
+  match n:
+    case 0n:
+      acc
+    case 1n+p:
+      +rgba = ((c << 8n) .|. 255 : U32)
+      round_trip.worst(p, (c + step : U32), step, U32.max(acc, channel_error(rgba, M.to_rgba(M.of_rgba(rgba), 255))))
+
+def near(+x: F32, +y: F32) -> Bool:
+  (F32.abs((x - y : F32)) < 0.001 : F32)
+
+# OKLab of sRGB red (Ottosson's reference: 0.62796, 0.22486, 0.12585) and white.
+def lab_is(v: M.Lab, +l: F32, +a: F32, +b: F32) -> Bool:
+  match v:
+    case M.Lab{x, y, z}:
+      near(x, l) && near(y, a) && near(z, b)
+
+def lch_hue(v: M.Lch) -> F32:
+  match v:
+    case M.Lch{l, c, h}:
+      h
+
+# Blue to yellow at 0.5 in OKLab keeps chroma: not a grey.
+def not_grey(+c: U32) -> Bool:
+  Bool.not(U32.is_eq(Color.red(c), Color.blue(c)) && U32.is_eq(Color.green(c), Color.blue(c)))
+
+def hex.go(n: Nat, +c: U32, acc: String) -> String:
+  match n:
+    case 0n:
+      acc
+    case 1n+p:
+      +d = (c .&. 15 : U32)
+      hex.go(p, (c >> 4n : U32), SCon{Char.from_u32((d + Bool.pick(U32, U32.is_lt(d, 10), 48, 87) : U32)), acc})
+
+def hex(+c: U32) -> String:
+  "0x" ++ hex.go(8n, c, "")
+
 def main() -> IO(Unit):
   do IO<Unit>:
     check(equals(C.pixel(C.new(1, 1, 1.0, 4278190335), 0, 0), 4278190335), "1x1 and RGBA order")
@@ -441,4 +591,26 @@ def main() -> IO(Unit):
     check(Bool.not(repaints(settle(framed(setup(), F.none())),
       settle(framed(with_hover(setup()), settle(framed(setup(), F.none())))))),
       "repaint: control: without its damage the last picture stays, and differs from the new frame")
-    IO.print("73 checks passed; this is runtime testing, not a proof of the complete system")
+    check(U32.is_eq(round_trip.worst(275037n, 0, 61, 0), 0) && U32.is_eq(round_trip.worst(256n, 0, 65793, 0), 0),
+      "mix: sRGB -> OKLab -> sRGB is exact on 275,293 colours (every 61st of 2^24 and every grey)")
+    check(lab_is(M.of_rgba(4278190335), 0.62796, 0.22486, 0.12585) && lab_is(M.of_rgba(4294967295), 1.0, 0.0, 0.0) &&
+      lab_is(M.of_rgba(255), 0.0, 0.0, 0.0), "mix: OKLab of red, white and black")
+    check(U32.is_eq(M.to_rgba(M.oklch_to_oklab(M.oklch(M.of_rgba(4278190335))), 255), 4278190335) &&
+      near(lch_hue(M.oklch(M.of_rgba(4278190335))), 0.51023), "mix: OKLCH of red (hue 29 degrees) and back")
+    check(U32.is_le(reference.worst(InOklab{}, mix_cases(), 0), 1) && U32.is_le(reference.worst(InLinear{}, mix_cases(), 0), 1) &&
+      U32.is_le(reference.worst(InSrgb{}, mix_cases(), 0), 1), "mix: 40 mixes in each space within 1 of a float64 reference")
+    IO.print("     worst channel error against the reference: oklab " ++ U32.show(reference.worst(InOklab{}, mix_cases(), 0)) ++
+      ", linear " ++ U32.show(reference.worst(InLinear{}, mix_cases(), 0)) ++ ", srgb " ++ U32.show(reference.worst(InSrgb{}, mix_cases(), 0)))
+    check(endpoints(InOklab{}, mix_cases()) && endpoints(InLinear{}, mix_cases()) && endpoints(InSrgb{}, mix_cases()),
+      "mix: exact ends at t = 0 and 1; t clamped outside 0..1; NaN gives the start")
+    check(U32.is_le(symmetry.worst(InOklab{}, mix_cases(), 0), 1) && U32.is_le(symmetry.worst(InLinear{}, mix_cases(), 0), 1) &&
+      U32.is_le(symmetry.worst(InSrgb{}, mix_cases(), 0), 1), "mix: mix(a, b, t) equals mix(b, a, 1 - t) within 1")
+    check(U32.is_eq(M.mix_oklab(4278190335, 0, 0.5), 4278190208) && U32.is_eq(M.mix_linear(4278190335, 0, 0.5), 4278190208) &&
+      U32.is_eq(M.mix_srgb(4278190335, 0, 0.5), 4278190208), "mix: red to transparent stays red at half alpha (premultiplied, no dark fringe)")
+    check(U32.is_eq(M.mix_oklab(4278190080, 65535, 0.25), 65344) && U32.is_eq(M.mix_linear(4278190080, 65535, 0.25), 65344),
+      "mix: alpha is linear in t and the colour comes from the visible end")
+    check(U32.is_eq(M.mix_oklab(65535, 4294902015, 0.5), 1823197183) && not_grey(M.mix_oklab(65535, 4294902015, 0.5)) &&
+      U32.is_eq(M.mix_srgb(65535, 4294902015, 0.5), 2155905279), "mix: blue to yellow at 0.5 in OKLab is not the sRGB grey")
+    IO.print("     blue + yellow at 0.5: oklab " ++ hex(M.mix_oklab(65535, 4294902015, 0.5)) ++ ", linear " ++
+      hex(M.mix_linear(65535, 4294902015, 0.5)) ++ ", srgb " ++ hex(M.mix_srgb(65535, 4294902015, 0.5)))
+    IO.print("82 checks passed; this is runtime testing, not a proof of the complete system")

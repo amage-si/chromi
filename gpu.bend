@@ -545,13 +545,38 @@ def render.whole(+r: Renderer, +asked: Bool, +w: U32, +h: U32, +regions: List<&2
   asked || Bool.not(V.kept(gpu(r))) || size.differs(V.target_size(gpu(r)), w, h) ||
     U32.is_gt((F.area(regions, 0) * 2 : U32), (w * h : U32))
 
+# A partial frame with no damage changes no pixel: the canvas and the image
+# on screen already show it. Unless the GPU owes a frame (a rebuilt
+# swapchain), it is neither painted nor presented: no quads, no uploads,
+# no submit. The frames in flight are untouched (nothing is acquired or
+# waited for), and the next paint copies the whole canvas into the image
+# it acquires, so a skipped present loses nothing.
+def render.still(+whole: Bool, regions: List<&2, G.Box>, r: Renderer) -> Bool:
+  Bool.not(whole) && List.is_empty(&2, G.Box, regions) && Bool.not(pending(r))
+
+# The renderer and frame a skipped paint answers: those a paint of no
+# regions would (every part kept as it was planned, 0 quads, partial).
+def render.skipped(r: Renderer, f: F.Frame) -> IO(Renderer & F.Frame):
+  Renderer{g, a, u, n, q, pt} = r
+  IO.pure(Renderer & F.Frame, (Renderer{g, a, u, n, 0, True{}}, f))
+
+def render.at(still: Bool, +whole: Bool, +r: Renderer, ps: List<&2, F.Part>, +regions: List<&2, G.Box>,
+  +w: U32, +h: U32, +sc: F32, +bg: U32) -> IO(Renderer & F.Frame):
+  match still:
+    case True{}:
+      render.skipped(r, F.Frame{w, h, sc, bg, ps, Nil{}, False{}})
+    case False{}:
+      render.go(whole, r, ps, regions, w, h, sc, bg)
+
 # Draws a retained frame and answers it as drawn: its parts with where
 # their quads lie in the store, for the next frame to keep, and no damage
-# left. A failed frame ends the program with its error.
+# left. A failed frame ends the program with its error. A frame with no
+# damage is not painted or presented (`render.still`).
 def render(+r: Renderer, f: F.Frame) -> IO(Renderer & F.Frame):
   match f:
     case F.Failed{m}:
       IO.die(Renderer & F.Frame, 22, m)
     case F.Frame{+w, +h, +sc, +bg, ps, ds, +wh}:
       +regions = F.regions.of(ds, G.Box{0, 0, w, h}, Nil{})
-      render.go(render.whole(r, wh, w, h, regions), r, ps, regions, w, h, sc, bg)
+      +whole = render.whole(r, wh, w, h, regions)
+      render.at(render.still(whole, regions, r), whole, r, ps, regions, w, h, sc, bg)

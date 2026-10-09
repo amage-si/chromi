@@ -9,6 +9,17 @@ sibling AMAGE libraries; the set of versions tested together is listed in
 
 ## Unreleased
 
+### Changed
+
+- `Gpu.render`: a partial frame with no damage is neither painted nor
+  presented (unless the GPU owes a frame). It answers the renderer and frame
+  a paint of no regions would; the canvas and the image on screen already
+  show it, and the next paint copies the whole canvas.
+- The eco demo steps its motions at the frame on screen (`on_screen`: one
+  frame before Ankra's frame time), so the first frame of every animation
+  already moves instead of drawing the start value (0 px). Its log marks
+  frames that were not presented.
+
 ### Added
 
 - `mix.bend`: colour interpolation for animations and gradients.

@@ -572,7 +572,7 @@ def motion(+prefs: MA.Prefs) -> Motion:
 def pressed(mo: Motion, +k: KT.State, +now: U32) -> Motion:
   match mo:
     case Motion{b, fa, +p}:
-      Motion{MA.button_step(b, p, k, button_id(), now), fa, p}
+      Motion{MA.button_step(b, p, M.theme(), k, button_id(), now), fa, p}
     case Boxed{x}:
       pressed(x, k, now)
 
@@ -580,7 +580,7 @@ def pressed(mo: Motion, +k: KT.State, +now: U32) -> Motion:
 def stepped(mo: Motion, +k: KT.State, +f: FL.Field, +now: U32) -> Motion:
   match mo:
     case Motion{b, fa, +p}:
-      Motion{MA.button_step(b, p, k, button_id(), now), MA.field_step(fa, p, k, field_id(), f, now), p}
+      Motion{MA.button_step(b, p, M.theme(), k, button_id(), now), MA.field_step(fa, p, k, field_id(), f, now), p}
     case Boxed{x}:
       stepped(x, k, f, now)
 

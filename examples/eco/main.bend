@@ -356,6 +356,15 @@ def frame_ms(+win: A.Win) -> U32:
   +mhz = A.refresh(win)
   frame_ms.of(U32.is_eq(mhz, 0), mhz)
 
+# The time of the frame on screen when `update` runs: one frame before the
+# frame time (while animating, update sees the next frame's grid time; at
+# rest, the moment of the input, drawn at once). Motions retarget there, so
+# the first frame drawn already moves: retargeted at the frame time itself,
+# a motion is drawn first at its start value, and every animation began
+# with a frame that changed no pixel.
+def on_screen(+win: A.Win) -> U32:
+  (A.frame_time(win) - frame_ms(win) : U32)
+
 # A deadline `wait` ms away is due by the next frame (or already past).
 def soon(+wait: U32, +fm: U32) -> Bool:
   U32.is_le(wait, fm) || U32.is_ge(wait, 2147483648)
@@ -394,7 +403,7 @@ def update.served(+win: A.Win, +es: List<&2, A.Input>, app: Demo, +a: U32, +d: B
   +sized = other_size(m, w, h)
   +again = sized || U32.is_gt(a, 0)
   +ft = A.frame_time(win)
-  +mo1 = U.stepped(mo, k, field, ft)
+  +mo1 = U.stepped(mo, k, field, on_screen(win))
   do IO<Loop.Step<Demo>>:
     logged(es, Nat.sub(now, t), a, field_word(edited, field))
     +r1 : Gpu.Renderer <- resized(sized, r, w, h)
@@ -543,7 +552,7 @@ def announced(+win: A.Win, step: Loop.Step<Demo>, svc: AS.Service, +asked: Bool)
 
 def attended(+win: A.Win, +es: List<&2, A.Input>, +app: Demo, +now: Nat, inputs: List<&2, KT.Input>,
   svc: AS.Service, +rs: List<&2, AM.Request>) -> IO(Loop.Step<Eco>):
-  +h = hear(rs, font_of(app), field_at(app), Heard{fold(inputs, font_of(app), field_at(app), A.frame_time(win),
+  +h = hear(rs, font_of(app), field_at(app), Heard{fold(inputs, font_of(app), field_at(app), on_screen(win),
     started_fold(app)), Nil{}})
   do IO<Loop.Step<Eco>>:
     said(heard_verdicts(h))
@@ -576,25 +585,28 @@ def update(win: A.Win, batch: List<&2, A.Input>, state: Eco) -> IO(Loop.Step<Eco
 # Drawing
 # -------
 
-def report(+n: U32, +ms: Nat, +r: Gpu.Renderer, +m: U.Model, +since: Nat, +damage: U32) -> IO(Unit):
+def report(+n: U32, +ms: Nat, +r: Gpu.Renderer, +m: U.Model, +since: Nat, +damage: U32, +shown: Bool) -> IO(Unit):
   IO.print("redraw " ++ U32.show(n) ++ " at " ++ Nat.show(since) ++ " ms: scene + GPU " ++ Nat.show(ms) ++
     " ms, " ++ Bool.pick(String, Gpu.last_partial(r), "damage only (" ++ U32.show(damage) ++ " px), ", "whole, ") ++
+    Bool.pick(String, shown, "", "not presented, ") ++
     U32.show(Gpu.last_quads(r)) ++ " quads, " ++ U32.show(U.glyphs(m)) ++ " glyphs cached, atlas " ++
     U32.show(Gpu.entries(r)) ++ " entries, " ++ U32.show(Gpu.uploaded(r)) ++ " texels uploaded")
 
 def drawn(+win: A.Win, got: Gpu.Renderer & Fr.Frame, +m: U.Model, +n: U32, +t: Nat, +t0: Nat, +damage: U32, clip: Clip.Clip,
-  +mo: U.Motion, +now: U32) -> IO(Loop.Step<Demo>):
+  +mo: U.Motion, +now: U32, +presents: U32) -> IO(Loop.Step<Demo>):
   (+r1, shown) = got
   do IO<Loop.Step<Demo>>:
     +t1 : Nat <- IO.now()
-    report((n + 1 : U32), Nat.sub(t1, t0), r1, m, Nat.sub(t1, t), damage)
+    report((n + 1 : U32), Nat.sub(t1, t0), r1, m, Nat.sub(t1, t), damage, U32.is_ne(V.drawn(Gpu.gpu(r1)), presents))
     return answer(Demo{r1, m, shown, (n + 1 : U32), t, clip, mo}, Gpu.pending(r1), U.next_at(mo, now, frame_ms(win)), now,
       frame_ms(win))
 
 # The frame is retained (Chromi's frame.bend): only what changed since the
 # last one is planned and redrawn. The report gives the damaged area in
-# pixels (the regions a partial frame redraws). The controls are drawn at
-# the frame's time (Ankra's frame_time: the refresh grid while animating).
+# pixels (the regions a partial frame redraws); a frame with no damage is
+# neither painted nor presented (Gpu.render), while the animation goes on.
+# The controls are drawn at the frame's time (Ankra's frame_time: the
+# refresh grid while animating).
 def draw.demo(+win: A.Win, app: Demo) -> IO(Loop.Step<Demo>):
   Demo{+r, +m, last, +n, +t, clip, +mo} = app
   +now = A.frame_time(win)
@@ -602,7 +614,7 @@ def draw.demo(+win: A.Win, app: Demo) -> IO(Loop.Step<Demo>):
     +t0 : Nat <- IO.now()
     +f : Fr.Frame <- IO.pure(Fr.Frame, U.framed(m, last, mo, now))
     got : Gpu.Renderer & Fr.Frame <- Gpu.render(r, f)
-    drawn(win, got, m, n, t, t0, Fr.area(Fr.regions(f), 0), clip, mo, now)
+    drawn(win, got, m, n, t, t0, Fr.area(Fr.regions(f), 0), clip, mo, now, V.drawn(Gpu.gpu(r)))
 
 def rewrap(step: Loop.Step<Demo>, svc: AS.Service) -> Loop.Step<Eco>:
   match step:

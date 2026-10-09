@@ -128,6 +128,10 @@ def word(e: A.Input) -> String:
       " leave"
     case A.Wheel{x, y, dx, dy}:
       " wheel"
+    case A.TextTyped{t}:
+      " text \"" ++ t ++ "\""
+    case A.Clipboard{c}:
+      " clipboard"
 
 def words(es: List<&2, A.Input>) -> String:
   match es:

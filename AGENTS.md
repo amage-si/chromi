@@ -42,10 +42,12 @@ Correct Bend is not fast Bend by default. Measured rules (Bend 2.0.35):
   `IO.now()`.
 
 Here: per-frame work must stay proportional to the damage. Prefer
-`Fr.stamped` for content whose stamp proves it unchanged. Cached quad words are
-lists because `Part` is `Data`; that per-frame copy is known debt (a persistent
-GPU slot per part is the real fix). The CPU quadtree painter's four quadrants
-are independent and the natural place for a parallel split.
+`Fr.stamped` for content whose stamp proves it unchanged. A part's quads live
+in Voltra's store from the frame that planned them; the part only keeps where
+(`Planned{epoch, quads, first}`), so a kept part is a run of stored instances,
+never copied again. Still per frame: walking every part to find those that
+meet the damage (`prepare`, `runs.of`). The CPU quadtree painter's four
+quadrants are independent and the natural place for a parallel split.
 
 ## Linux first
 

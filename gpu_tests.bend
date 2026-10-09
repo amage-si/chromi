@@ -347,6 +347,51 @@ def resized.step(prev: Gpu.Renderer & F.Frame) -> IO(Gpu.Renderer & F.Frame):
     check(F.whole(next) && Bool.not(V.kept(Gpu.gpu(r1))), "frames: a new size is drawn whole")
     rendered(r1, next, 240, 150, "frames: the whole frame at a new size, 240x150")
 
+# 4200 one-pixel dots in a 70x60 box: more new quads than the store has
+# room for after the first frames (it starts with 4096).
+def dots(n: Nat, +i: Nat, s: S.Scene) -> S.Scene:
+  match n:
+    case 0n:
+      s
+    case 1n+p:
+      +x = Nat.mod(i, 70n)
+      +y = Nat.div(i, 70n)
+      dots(p, 1n+i, S.fill_rect(s, G.Rect{F32.add(230.0, F32.from_nat(x)), F32.add(20.0, F32.from_nat(y)),
+        1.0, 1.0}, Bool.pick(U32, Nat.is_eq(Nat.mod(Nat.add(x, y), 2n), 0n), 4282664191, 4294901759)))
+
+# The frame of `l` with the dots on top.
+def dotted(l: Setup, last: F.Frame) -> F.Frame:
+  Setup{+hover, +focus, +x, more, gl, bg, +w, +h} = l
+  b = F.begin(last, w, h, 1.0, 336860415)
+  b = F.part(b, 1, s => S.fill_rect(s, G.Rect{16.0, 16.0, 288.0, 168.0}, 354033919))
+  b = F.part(b, 2, s => paint.button(hover, focus, s))
+  b = F.part(b, 3, s => S.blit_rgba(s, 3, 200.0, 40.0, 64, 64, picture(64, 64)))
+  b = F.part(b, 4, s => S.fill_rect(s, G.Rect{x, 90.0, 120.0, 50.0}, 2164195456))
+  b = F.part(b, 5, s => S.blit_mask(s, 1, F32.neg(30.0), 140.0, 100, 60, ramp(100, 60), 2868903935))
+  F.end(F.part(big.part(bg, glyph.part(gl, extra.part(more, b))), 9, s => dots(4200n, 0n, s)))
+
+def store.check(got: Gpu.Renderer & F.Frame, +before: U32) -> IO(Gpu.Renderer & F.Frame):
+  (+r, f) = got
+  do IO<Gpu.Renderer & F.Frame>:
+    check(U32.is_gt(V.store_generation(Gpu.gpu(r)), before), "store: that frame started the store over (" ++
+      U32.show(V.stored(Gpu.gpu(r))) ++ " quads stored)")
+    return (r, f)
+
+# A part with more new quads than the store has room for: the store starts
+# over inside the frame, and every part the frame draws is planned again.
+def store.step(prev: Gpu.Renderer & F.Frame, l: Setup) -> IO(Gpu.Renderer & F.Frame):
+  (+r, last) = prev
+  +before = V.store_generation(Gpu.gpu(r))
+  +next = dotted(l, last)
+  +damaged = F.area(F.regions(next), 0)
+  do IO<Gpu.Renderer & F.Frame>:
+    check(Bool.not(F.whole(next)) && U32.is_gt(damaged, 0) && U32.is_lt(damaged, 32000),
+      "frames: a part with more quads than the store has room for: drawn partly, " ++ U32.show(damaged) ++
+      " of 64000 pixels damaged")
+    got : Gpu.Renderer & F.Frame <- rendered(r, next, 320, 200,
+      "frames: a part with more quads than the store has room for, so the store starts over inside the frame")
+    store.check(got, before)
+
 def back(prev: Gpu.Renderer & F.Frame) -> IO(Gpu.Renderer & F.Frame):
   (+r, last) = prev
   do IO<Gpu.Renderer & F.Frame>:
@@ -370,7 +415,9 @@ def frames(+r0: Gpu.Renderer) -> IO(Gpu.Renderer):
     s5d : Gpu.Renderer & F.Frame <- step(s5c,
       without_hover(with_big(with_glyph(added(moved(with_focus(with_hover(setup()))))))),
       "frames: after the atlas started over, kept parts are planned again where drawn")
-    s6 : Gpu.Renderer & F.Frame <- resized.step(s5d)
+    s5e : Gpu.Renderer & F.Frame <- store.step(s5d,
+      without_hover(with_big(with_glyph(added(moved(with_focus(with_hover(setup()))))))))
+    s6 : Gpu.Renderer & F.Frame <- resized.step(s5e)
     s7 : Gpu.Renderer & F.Frame <- back(s6)
     stripped(s7)
 

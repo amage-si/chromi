@@ -10,7 +10,7 @@ import ./scene.bend as S
 # layout id of a block of content), the draw list it recorded (scene.bend)
 # and the box of surface pixels that list can touch. The next frame is
 # built from the last one: a part whose content did not change is kept as
-# it was, with what a renderer derived from it (the GPU path's packed
+# it was, with what a renderer derived from it (the GPU path's stored
 # quads), and is neither recorded nor planned again. The frame records as
 # damage the boxes where its picture may differ from the last one: the old
 # and the new box of each changed part and the boxes of parts added or
@@ -31,11 +31,12 @@ import ./scene.bend as S
 # parts moved, added or removed cost a scan of the rest.
 
 # What a renderer derived from a part's operations, valid while the part is
-# kept (Chromi's GPU path: Voltra quads packed as instance words, and the
-# atlas epoch their texture coordinates belong to).
+# kept (Chromi's GPU path: its quads written once into Voltra's store, at
+# [first, first + quads), and the epoch of the atlas and the store they
+# belong to).
 type Cache is Data:
   Unplanned{}
-  Planned{epoch: U32, quads: U32, words: List<&2, U32>}
+  Planned{epoch: U32, quads: U32, first: U32}
 
 type Part is Data:
   Part{id: U32, stamp: U32, bounds: G.Box, ops: List<&2, S.Op>, cache: Cache}

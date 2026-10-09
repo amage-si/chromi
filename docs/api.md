@@ -94,8 +94,8 @@ A `F.Frame` is a frame as parts in drawing order. Each `F.Part{id, stamp,
 bounds, ops, cache}` has a stable `id` chosen by the app (the Kairo or Mokko
 id of a control, the layout id of a block), its draw list, the box of
 surface pixels that list can touch, and what a renderer derived from it
-(`cache`: `Unplanned{}` or `Planned{epoch, quads, words}`, the GPU path's
-packed quads). Each part is a separate draw list starting with the whole
+(`cache`: `Unplanned{}` or `Planned{epoch, quads, first}`: the GPU path's
+quads, at `[first, first + quads)` of Voltra's store). Each part is a separate draw list starting with the whole
 surface as its clip. A frame is built from the last one:
 
 | Function | Contract |
@@ -161,5 +161,5 @@ Requires [Voltra](https://github.com/amage-si/voltra) beside Chromi.
 | `Gpu.resize(r, w, h)`, `Gpu.pending(r)`, `Gpu.invalidate(r)`, `Gpu.target_size(r)`, `Gpu.close(r)` | Voltra's, through the renderer. |
 | `Gpu.uploaded(r)`, `Gpu.entries(r)`, `Gpu.resets(r)` | Texels uploaded so far, atlas entries, atlas restarts. |
 | `Gpu.plan(ops, atlas)` | The pure part of `draw`: quads, regions to upload, and whether something found no room. |
-| `Gpu.render(r, f)` | `IO(Renderer & F.Frame)`. Draws a retained frame on Voltra's canvas and answers it as drawn (its parts with their planned words, no damage). Each damaged region is redrawn alone: the background, then the quads of every part that meets it, scissored to the region (Voltra's `paint`); the present names the regions. A part's quads are planned (atlas, packing) when it is first drawn and kept in the part while the atlas lasts (its epoch), so a kept part costs no lookup or packing; atlas content the frame needs is uploaded inside the frame. Drawn whole when the frame asks for it, when the canvas does not hold the last picture, or when the damage covers more than half of the surface. A failed frame ends the program. A frame's planned words belong to the renderer that drew it. |
+| `Gpu.render(r, f)` | `IO(Renderer & F.Frame)`. Draws a retained frame on Voltra's canvas and answers it as drawn (its parts with where their quads lie, no damage). Each damaged region is redrawn alone: the background, then the quads of every part that meets it, scissored to the region (Voltra's `paint`); the present names the regions. A part's quads are planned (atlas) when it is first drawn and written once into Voltra's store, which keeps them on the GPU; the part keeps where they lie while the atlas and the store last (its epoch), so a kept part costs no lookup, packing or copy, only a run of stored instances (adjacent parts' runs join into one draw); atlas content the frame needs is uploaded inside the frame. When a frame's new quads do not fit in the store, the store starts over (Voltra waits for the device) and the frame plans again every part it draws. Drawn whole when the frame asks for it, when the canvas does not hold the last picture, or when the damage covers more than half of the surface. A failed frame ends the program. A frame's planned parts belong to the renderer that drew it. |
 | `Gpu.last_quads(r)`, `Gpu.last_partial(r)` | Quads uploaded and drawn by the last `render`, and whether it redrew only damage (0 and False after `draw`). |

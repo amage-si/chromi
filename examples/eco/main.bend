@@ -7,20 +7,25 @@ import ./media.bend as Media
 import ../../../Runika/font.bend as F
 import ../../../Ankra/window.bend as A
 import ../../../Ankra/app.bend as Loop
+import ../../../Ankra/clipboard.bend as Clip
 import ../../../Kairo/ankra_adapter.bend as AA
 import ../../../Kairo/main.bend as K
 import ../../../Kairo/types.bend as KT
+import ../../../Kairo/edit.bend as KE
+import ../../../Mokko/field.bend as FL
 import ../../../Tessra/geometry.bend as TG
 import ../../../Voltra/gpu.bend as V
 
 # The integrated demo, GPU-presented: Ankra owns the window and its
-# events, Kairo the interaction state, Tessra the layout, Runika, Syllo
-# and Dithra the text, Ocula the PNG, Splina the SVG, Mokko the button,
+# events, the text input and the clipboard, Kairo the interaction state
+# and the editing, Tessra the layout, Runika, Syllo and Dithra the text,
+# Ocula the PNG, Splina the SVG, Mokko the button and the text field,
 # Chromi the frame as a draw list, and Voltra draws that list on the GPU.
 #
 # The frame is redrawn only when something visible changed (hover, press,
-# focus, a click, a new size, an expose); between changes the program
-# waits for events without a deadline. Resize the window: the layout
+# focus, a click, an edit, a new size, an expose); between changes the
+# program waits for events without a deadline. An edit redraws only the
+# field and its note. Resize the window: the layout
 # follows. Close it normally. Run from the Chromi directory (the SVG path
 # is relative; the PNG and the font are system files).
 
@@ -37,7 +42,7 @@ def title() -> String:
   "AMAGE Eco - Ankra, Voltra, Chromi"
 
 type Demo is Data:
-  Demo{renderer: Gpu.Renderer, model: U.Model, shown: Fr.Frame, redraws: U32, started: Nat}
+  Demo{renderer: Gpu.Renderer, model: U.Model, shown: Fr.Frame, redraws: U32, started: Nat, clip: Clip.Clip}
 
 def need(-A: Data, r: Result<&2, &2, String, A>) -> IO(A):
   match r:
@@ -49,8 +54,35 @@ def need(-A: Data, r: Result<&2, &2, String, A>) -> IO(A):
 # Input
 # -----
 
+# The field after Kairo's actions: `edited` when it must be drawn again,
+# and the requests (copy, paste) for the host, newest first.
+type Edits is Data:
+  Edits{field: FL.Field, edited: Bool, requests: List<&2, KE.Request>}
+
+def request.push(r: KE.Request, rs: List<&2, KE.Request>) -> List<&2, KE.Request>:
+  match r:
+    case KE.NoRequest{}:
+      rs
+    case KE.CopyText{t}:
+      Con{KE.CopyText{t}, rs}
+    case KE.PasteText{}:
+      Con{KE.PasteText{}, rs}
+
+def fed(x: FL.Fed, +edited: Bool, rs: List<&2, KE.Request>) -> Edits:
+  FL.Fed{f, +d, r} = x
+  Edits{f, edited || d, request.push(r, rs)}
+
+# Every action of a Kairo change goes through the field, at its bounds.
+def feed(actions: +List<KT.Action>, +font: F.Font, +at: TG.Rect, e: Edits) -> Edits:
+  match actions:
+    case Nil{}:
+      e
+    case Con{a, rest}:
+      Edits{f, +ed, rs} = e
+      feed(rest, font, at, fed(FL.feed(font, U.field_px(), at, U.field_id(), f, a), ed, rs))
+
 type Fold is Data:
-  Fold{kairo: KT.State, activations: U32, dirty: Bool}
+  Fold{kairo: KT.State, activations: U32, dirty: Bool, edits: Edits}
 
 def changed(c: KT.Change) -> Bool:
   KT.Change{s, actions, dirty, layout} = c
@@ -60,14 +92,64 @@ def activated(c: KT.Change) -> U32:
   KT.Change{s, actions, dirty, layout} = c
   K.activation_count(actions)
 
-def fold(xs: List<&2, KT.Input>, f: Fold) -> Fold:
+def actions_of(c: KT.Change) -> +List<KT.Action>:
+  KT.Change{s, actions, dirty, layout} = c
+  actions
+
+def fold(xs: List<&2, KT.Input>, +font: F.Font, +at: TG.Rect, f: Fold) -> Fold:
   match xs:
     case Nil{}:
       f
     case Con{x, rest}:
-      Fold{k, +a, +d} = f
+      Fold{k, +a, +d, e} = f
       +c = K.dispatch(k, x)
-      fold(rest, Fold{K.next(c), (a + activated(c) : U32), d || changed(c)})
+      fold(rest, font, at, Fold{K.next(c), (a + activated(c) : U32), d || changed(c),
+        feed(actions_of(c), font, at, e)})
+
+# The clipboard's side of the edits: a copy takes the clipboard; a paste
+# of our own clipboard is typed at once as Kairo text, a paste of another
+# client's arrives in a later batch as Clipboard{Pasted} (Kairo's adapter
+# makes it text).
+type Served is Data:
+  Served{clip: Clip.Clip, kairo: KT.State, edits: Edits}
+
+def pasted(got: Maybe<&2, String>, +font: F.Font, +at: TG.Rect, s: Served) -> Served:
+  match got:
+    case None{}:
+      s
+    case Some{t}:
+      Served{c, k, e} = s
+      +ch = K.dispatch(k, KT.TextInput{t})
+      Served{c, K.next(ch), feed(actions_of(ch), font, at, e)}
+
+def owned_word(c: Clip.Clip) -> String:
+  Bool.pick(String, Clip.owned(c), "owned", "not owned")
+
+def paste_word(got: Maybe<&2, String>) -> String:
+  match got:
+    case None{}:
+      "asked the owner"
+    case Some{t}:
+      "own text \"" ++ t ++ "\""
+
+def requested(rs: List<&2, KE.Request>, +win: A.Win, +font: F.Font, +at: TG.Rect, s: Served) -> IO(Served):
+  match rs:
+    case Nil{}:
+      IO.pure(Served, s)
+    case Con{KE.CopyText{+t}, rest}:
+      Served{c, k, e} = s
+      do IO<Served>:
+        +c1 : Clip.Clip <- Clip.copy(win, t)
+        IO.print("clipboard: copy \"" ++ t ++ "\", " ++ owned_word(c1))
+        requested(rest, win, font, at, Served{c1, k, e})
+    case Con{KE.PasteText{}, rest}:
+      Served{+c, k, e} = s
+      do IO<Served>:
+        +got : Maybe<&2, String> <- Clip.paste(win, c)
+        IO.print("clipboard: paste, " ++ paste_word(got))
+        requested(rest, win, font, at, pasted(got, font, at, Served{c, k, e}))
+    case Con{KE.NoRequest{}, rest}:
+      requested(rest, win, font, at, s)
 
 type Next is Data:
   Next{model: U.Model, redraw: Bool}
@@ -130,8 +212,14 @@ def word(e: A.Input) -> String:
       " wheel"
     case A.TextTyped{t}:
       " text \"" ++ t ++ "\""
-    case A.Clipboard{c}:
-      " clipboard"
+    case A.Clipboard{A.Asked{A.Request{q, p, target, tm, atom}}}:
+      " clipboard-asked " ++ U32.show(target)
+    case A.Clipboard{A.Lost{}}:
+      " clipboard-lost"
+    case A.Clipboard{A.Pasted{t}}:
+      " pasted \"" ++ t ++ "\""
+    case A.Clipboard{A.PasteFailed{code}}:
+      " paste-failed " ++ U32.show(code)
 
 def words(es: List<&2, A.Input>) -> String:
   match es:
@@ -140,73 +228,128 @@ def words(es: List<&2, A.Input>) -> String:
     case Con{e, rest}:
       word(e) ++ words(rest)
 
-def logged(+es: List<&2, A.Input>, +activations: U32) -> IO(Unit):
+# What the field became, after the batch's input.
+def refusal_word(m: Maybe<&2, String>) -> String:
+  match m:
+    case None{}:
+      ""
+    case Some{message}:
+      " refused: " ++ message
+
+def field_word(edited: Bool, +f: FL.Field) -> String:
+  match edited:
+    case False{}:
+      ""
+    case True{}:
+      " -> field \"" ++ FL.text_of(f) ++ "\"" ++ refusal_word(FL.message(f))
+
+def logged(+es: List<&2, A.Input>, +at: Nat, +activations: U32, tail: String) -> IO(Unit):
   match es:
     case Nil{}:
       IO.pure(Unit, Unit{})
     case _:
-      IO.print("input:" ++ words(es) ++ Bool.pick(String, U32.is_gt(activations, 0),
-        " -> " ++ U32.show(activations) ++ " activation(s)", ""))
+      IO.print("input at " ++ Nat.show(at) ++ " ms:" ++ words(es) ++ Bool.pick(String, U32.is_gt(activations, 0),
+        " -> " ++ U32.show(activations) ++ " activation(s)", "") ++ tail)
 
 def decide(+app: Demo, +redraw: Bool) -> Loop.Step<Demo>:
   Bool.pick(Loop.Step<Demo>, redraw, Loop.Redraw{app}, Loop.Keep{app})
 
-def update.folded(+win: A.Win, +es: List<&2, A.Input>, app: Demo, f: Fold) -> IO(Loop.Step<Demo>):
-  Demo{+r, +m, shown, n, t} = app
-  Fold{+k, +a, +d} = f
+def refielded(edited: Bool, +m: U.Model, +f: FL.Field) -> IO(U.Model):
+  match edited:
+    case False{}:
+      IO.pure(U.Model, m)
+    case True{}:
+      relaid(U.refield(m, f))
+
+def update.served(+win: A.Win, +es: List<&2, A.Input>, app: Demo, +a: U32, +d: Bool, +now: Nat, s: Served) -> IO(Loop.Step<Demo>):
+  Demo{+r, +m, shown, n, +t, old} = app
+  Served{clip, +k, Edits{+field, +edited, rs}} = s
   +w = A.width(win)
   +h = A.height(win)
   +sized = other_size(m, w, h)
   +again = sized || U32.is_gt(a, 0)
   do IO<Loop.Step<Demo>>:
-    logged(es, a)
+    logged(es, Nat.sub(now, t), a, field_word(edited, field))
     +r1 : Gpu.Renderer <- resized(sized, r, w, h)
-    +m1 : U.Model <- remodel(again, U.with_kairo(m, k), w, h, (U.clicks(m) + a : U32))
-    return decide(Demo{r1, m1, shown, n, t}, d || again || A.exposed(es) || Gpu.pending(r1))
+    +m1 : U.Model <- refielded(edited, U.with_kairo(m, k), field)
+    +m2 : U.Model <- remodel(again, m1, w, h, (U.clicks(m) + a : U32))
+    return decide(Demo{r1, m2, shown, n, t, clip}, d || edited || again || A.exposed(es) || Gpu.pending(r1))
 
-# Window events through Kairo; a new size or a click redoes the layout.
+# Kairo's actions reach the field; the clipboard answers other clients
+# (serve) and the field's requests (copy, paste).
+# Small views of the app. The Demo is wide (the model is flattened into
+# it), so no def holds the Demo and its model at once.
 def model_of(a: Demo) -> U.Model:
-  Demo{r, m, s, n, t} = a
+  Demo{r, m, s, n, t, c} = a
   m
 
+def clip_of(a: Demo) -> Clip.Clip:
+  Demo{r, m, s, n, t, c} = a
+  c
+
+def font_of(a: Demo) -> F.Font:
+  Demo{r, m, s, n, t, c} = a
+  U.font_of(m)
+
+def field_at(a: Demo) -> TG.Rect:
+  Demo{r, m, s, n, t, c} = a
+  U.field_at(m)
+
+def started_fold(a: Demo) -> Fold:
+  Demo{r, +m, s, n, t, c} = a
+  Fold{U.kairo(m), 0, False{}, Edits{U.field_of(m), False{}, Nil{}}}
+
+def update.folded(+win: A.Win, +es: List<&2, A.Input>, +app: Demo, +now: Nat, f: Fold) -> IO(Loop.Step<Demo>):
+  Fold{k, +a, +d, Edits{field, edited, rs}} = f
+  do IO<Loop.Step<Demo>>:
+    +c1 : Clip.Clip <- Clip.serve(win, clip_of(app), es)
+    +s : Served <- requested(List.reverse(&2, KE.Request, rs), win, font_of(app), field_at(app),
+      Served{c1, k, Edits{field, edited, Nil{}}})
+    update.served(win, es, app, a, d, now, s)
+
+# Window events through Kairo and the field; a new size or a click redoes
+# the layout, an edit the field's text and note.
 def update(win: A.Win, batch: List<&2, A.Input>, state: Demo) -> IO(Loop.Step<Demo>):
   +es = batch
   +app = state
   do IO<Loop.Step<Demo>>:
+    +now : Nat <- IO.now()
     +inputs : List<&2, KT.Input> <- need(List<&2, KT.Input>, AA.normalize(es, 1.0))
-    update.folded(win, es, app, fold(inputs, Fold{U.kairo(model_of(app)), 0, False{}}))
+    update.folded(win, es, app, now, fold(inputs, font_of(app), field_at(app), started_fold(app)))
 
 # Drawing
 # -------
 
-def report(+n: U32, +ms: Nat, +r: Gpu.Renderer, +m: U.Model, +since: Nat) -> IO(Unit):
+def report(+n: U32, +ms: Nat, +r: Gpu.Renderer, +m: U.Model, +since: Nat, +damage: U32) -> IO(Unit):
   IO.print("redraw " ++ U32.show(n) ++ " at " ++ Nat.show(since) ++ " ms: scene + GPU " ++ Nat.show(ms) ++
-    " ms, " ++ Bool.pick(String, Gpu.last_partial(r), "damage only, ", "whole, ") ++
+    " ms, " ++ Bool.pick(String, Gpu.last_partial(r), "damage only (" ++ U32.show(damage) ++ " px), ", "whole, ") ++
     U32.show(Gpu.last_quads(r)) ++ " quads, " ++ U32.show(U.glyphs(m)) ++ " glyphs cached, atlas " ++
     U32.show(Gpu.entries(r)) ++ " entries, " ++ U32.show(Gpu.uploaded(r)) ++ " texels uploaded")
 
-def drawn(got: Gpu.Renderer & Fr.Frame, +m: U.Model, +n: U32, +t: Nat, +t0: Nat) -> IO(Loop.Step<Demo>):
+def drawn(got: Gpu.Renderer & Fr.Frame, +m: U.Model, +n: U32, +t: Nat, +t0: Nat, +damage: U32, clip: Clip.Clip) -> IO(Loop.Step<Demo>):
   (+r1, shown) = got
   do IO<Loop.Step<Demo>>:
     +t1 : Nat <- IO.now()
-    report((n + 1 : U32), Nat.sub(t1, t0), r1, m, Nat.sub(t1, t))
-    return decide(Demo{r1, m, shown, (n + 1 : U32), t}, Gpu.pending(r1))
+    report((n + 1 : U32), Nat.sub(t1, t0), r1, m, Nat.sub(t1, t), damage)
+    return decide(Demo{r1, m, shown, (n + 1 : U32), t, clip}, Gpu.pending(r1))
 
 # The frame is retained (Chromi's frame.bend): only what changed since the
-# last one is planned and redrawn.
+# last one is planned and redrawn. The report gives the damaged area in
+# pixels (the regions a partial frame redraws).
 def draw(win: A.Win, app: Demo) -> IO(Loop.Step<Demo>):
-  Demo{+r, +m, last, +n, +t} = app
+  Demo{+r, +m, last, +n, +t, clip} = app
   do IO<Loop.Step<Demo>>:
     +t0 : Nat <- IO.now()
-    got : Gpu.Renderer & Fr.Frame <- Gpu.render(r, U.framed(m, last))
-    drawn(got, m, n, t, t0)
+    +f : Fr.Frame <- IO.pure(Fr.Frame, U.framed(m, last))
+    got : Gpu.Renderer & Fr.Frame <- Gpu.render(r, f)
+    drawn(got, m, n, t, t0, Fr.area(Fr.regions(f), 0), clip)
 
 # Startup and teardown
 # --------------------
 
 def finish(end: A.Win & Demo) -> IO(Unit):
   (win, app) = end
-  Demo{+r, +m, s, +n, t} = app
+  Demo{+r, +m, s, +n, t, c} = app
   do IO<Unit>:
     IO.print("frames presented: " ++ U32.show(V.drawn(Gpu.gpu(r))) ++ ", redraws: " ++ U32.show(n) ++
       ", clicks: " ++ U32.show(U.clicks(m)))
@@ -231,5 +374,5 @@ def main() -> IO(Unit):
     +t2 : Nat <- IO.now()
     IO.print(V.describe(Gpu.gpu(r)))
     IO.print("window and GPU ready in " ++ Nat.show(Nat.sub(t2, t1)) ++ " ms")
-    end : A.Win & Demo <- Loop.run(~Demo, ~update, ~draw, win, Demo{r, model, Fr.none(), 0, t0})
+    end : A.Win & Demo <- Loop.run(~Demo, ~update, ~draw, win, Demo{r, model, Fr.none(), 0, t0, Clip.none()})
     finish(end)

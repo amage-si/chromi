@@ -8,7 +8,7 @@ rasterization belong here; windows and input belong to
 [Ankra](https://github.com/amage-si/ankra), GPU access to
 [Voltra](https://github.com/amage-si/voltra).
 
-**Status:** an early renderer with two paths, tested with **Bend 2.0.35**. A
+**Status:** an early renderer with two paths, tested with **Bend 2.0.37**. A
 frame is recorded as a **draw list**, or as a **retained frame** of parts that
 keeps what did not change; the **CPU reference** paints it into a quadtree
 canvas, and the **GPU path** draws it through Voltra, redrawing only what

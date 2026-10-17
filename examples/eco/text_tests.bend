@@ -83,25 +83,25 @@ def same_maybe(a: Maybe<&2, T.Run>, b: Maybe<&2, T.Run>) -> Bool:
       False{}
 
 # The demo's seven texts at the demo's sizes and widths (column 492).
-type Text is Data:
-  Text{text: String, size: F32, width: F32}
+type Sample is Data:
+  Sample{text: String, size: F32, width: F32}
 
-def texts(+n: U32) -> List<&2, Text>:
-  [Text{"AMAGE Eco", 34.0, 492.0}, Text{"Uma janela, uma GPU, várias bibliotecas.", 19.0, 492.0},
-    Text{"Texto real em Bend: ação, coração, café. A Ankra cuida da janela e dos eventos, a Voltra da GPU e o Chromi da lista de desenho.", 16.0, 492.0},
-    Text{"Ativar", 18.0, 1000000.0}, Text{"Ativado " ++ U32.show(n) ++ " vezes.", 16.0, 492.0},
-    Text{"PNG decodificado pela Ocula", 13.0, 1000000.0}, Text{"SVG interpretado pela Splina", 13.0, 1000000.0}]
+def texts(+n: U32) -> List<&2, Sample>:
+  [Sample{"AMAGE Eco", 34.0, 492.0}, Sample{"Uma janela, uma GPU, várias bibliotecas.", 19.0, 492.0},
+    Sample{"Texto real em Bend: ação, coração, café. A Ankra cuida da janela e dos eventos, a Voltra da GPU e o Chromi da lista de desenho.", 16.0, 492.0},
+    Sample{"Ativar", 18.0, 1000000.0}, Sample{"Ativado " ++ U32.show(n) ++ " vezes.", 16.0, 492.0},
+    Sample{"PNG decodificado pela Ocula", 13.0, 1000000.0}, Sample{"SVG interpretado pela Splina", 13.0, 1000000.0}]
 
 type Pass is Data:
   Pass{cache: T.Cache, same: Bool}
 
 # Prepares each text through the cache and compares it with the run
 # prepared from scratch.
-def pass(ts: List<&2, Text>, +font: F.Font, p: Pass) -> Pass:
+def pass(ts: List<&2, Sample>, +font: F.Font, p: Pass) -> Pass:
   match ts:
     case Nil{}:
       p
-    case Con{Text{+t, +s, +w}, rest}:
+    case Con{Sample{+t, +s, +w}, rest}:
       Pass{c, ok} = p
       +r = T.prepare(font, t, s, w, c)
       pass(rest, font, Pass{prepared_cache(r), ok && same_maybe(prepared_run(r), run_or(T.prepare_uncached(font, t, s, w)))})

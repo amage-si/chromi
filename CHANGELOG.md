@@ -7,6 +7,15 @@ patch version (0.1.1) only fixes. Chromi is built from source together with its
 sibling AMAGE libraries; the set of versions tested together is listed in
 [eco-build's releases](https://github.com/amage-si/eco-build/tree/main/releases).
 
+## [0.2.1] - 2026-10-17
+
+### Changed
+
+- `examples/eco/text_tests.bend` names its sample record `Sample` instead
+  of `Text`, so it still builds once Base's `Event` gains a `Text`
+  constructor (upstream #1441, next Bend release). With Auvia 0.2.0 the eco
+  demo builds there too; its own code needed no change. No library change.
+
 ## [0.2.0] - 2026-10-09
 ### Changed
 
@@ -63,5 +72,6 @@ of AMAGE Eco 0.1.0.
   with clipboard, PNG and SVG, accessible through Auvia, idle at zero wakeups.
 - 73 native checks and 27 GPU checks (0 differing pixels).
 
+[0.2.1]: https://github.com/amage-si/chromi/releases/tag/v0.2.1
 [0.2.0]: https://github.com/amage-si/chromi/releases/tag/v0.2.0
 [0.1.0]: https://github.com/amage-si/chromi/releases/tag/v0.1.0
